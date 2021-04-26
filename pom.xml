@@ -1,23 +1,24 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.microsoft.terraform</groupId>
-  <artifactId>terraform-spring-boot-solution</artifactId>
-  <version>1.0.0</version>
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>2.4.3</version>
+  </parent>
+
+  <groupId>org.azbuilder</groupId>
+  <artifactId>terraform</artifactId>
+  <version>${revision}</version>
   <packaging>pom</packaging>
 
   <name>Terraform Spring Boot solution</name>
-  <url>https://github.com/Microsoft/terraform-spring-boot</url>
+  <url>https://github.com/AzBuilder/terraform-spring-boot</url>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <revision>0.0.1</revision>
   </properties>
-
-  <scm>
-    <connection>scm:git:git://github.com/Microsoft/terraform-spring-boot.git</connection>
-    <developerConnection>scm:git:ssh://github.com:Microsoft/terraform-spring-boot.git</developerConnection>
-    <url>https://github.com/Microsoft/terraform-spring-boot/tree/master</url>
-  </scm>
 
   <licenses>
     <license>

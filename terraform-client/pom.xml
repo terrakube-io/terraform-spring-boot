@@ -1,24 +1,25 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.microsoft.terraform</groupId>
+  <parent>
+    <groupId>org.azbuilder</groupId>
+    <artifactId>terraform</artifactId>
+    <version>${revision}</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <groupId>org.azbuilder.terraform</groupId>
   <artifactId>terraform-client</artifactId>
-  <version>1.0.0</version>
+  <version>${revision}</version>
   <packaging>jar</packaging>
 
   <name>Terraform Client for Java developers</name>
   <description>Terraform client wrapper for Java developers</description>
-  <url>https://github.com/Microsoft/terraform-spring-boot</url>
+  <url>https://github.com/AzBuilder/terraform-spring-boot</url>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
-
-  <scm>
-    <connection>scm:git:git://github.com/Microsoft/terraform-spring-boot.git</connection>
-    <developerConnection>scm:git:ssh://github.com:Microsoft/terraform-spring-boot.git</developerConnection>
-    <url>https://github.com/Microsoft/terraform-spring-boot/tree/master</url>
-  </scm>
 
   <licenses>
     <license>
@@ -41,42 +42,4 @@
     </developer>
   </developers>
 
-  <build>
-    <plugins>
-      <plugin>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.7.0</version>
-        <configuration>
-          <source>1.8</source>
-          <target>1.8</target>
-        </configuration>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-source-plugin</artifactId>
-        <version>3.0.1</version>
-        <executions>
-          <execution>
-            <id>attach-sources</id>
-            <goals>
-              <goal>jar</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-javadoc-plugin</artifactId>
-        <version>3.0.0</version>
-        <executions>
-          <execution>
-            <id>attach-javadocs</id>
-            <goals>
-              <goal>jar</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
-    </plugins>
-  </build>
 </project>

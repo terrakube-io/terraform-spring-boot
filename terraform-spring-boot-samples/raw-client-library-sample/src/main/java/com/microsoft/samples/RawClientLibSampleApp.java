@@ -3,7 +3,7 @@ package com.microsoft.samples;
 import java.io.*;
 import java.util.*;
 
-import com.microsoft.terraform.*;
+import org.azbuilder.terraform.TerraformClient;
 
 public final class RawClientLibSampleApp {
     public static void main(String[] args) throws Exception {
@@ -11,11 +11,11 @@ public final class RawClientLibSampleApp {
             System.out.println("Working folder path argument missing");
             System.exit(1);
         }
-        TerraformOptions options = new TerraformOptions();
-        options.setArmSubscriptionId("<Azure Subscription ID>");
-        options.setArmClientId("<Azure Client ID>");
-        options.setArmClientSecret("<Azure Client Secret>");
-        options.setArmTenantId("<Azure Tenant ID>");
+        HashMap<String, String> options = new HashMap<>();
+        options.put("ARM_SUBSCRIPTION_ID","<Azure Subscription ID>");
+        options.put("ARM_CLIENT_ID","<Azure Client ID>");
+        options.put("ARM_CLIENT_SECRET","<Azure Client Secret>");
+        options.put("ARM_TENANT_ID","<Azure Tenant ID>");
         try (TerraformClient client = new TerraformClient(options)) {
             System.out.println(client.version().get());
             client.setOutputListener(System.out::println);

@@ -15,20 +15,20 @@ Simply add the following dependency to your project's `pom.xml` will enable you 
 
 ```xml
 <dependency>
-    <groupId>com.microsoft.terraform</groupId>
+    <groupId>org.azbuilder.terraform</groupId>
     <artifactId>terraform-client</artifactId>
-    <version>1.0.0</version>
+    <version>0.0.1</version>
 </dependency>
 ```
 
 And now you are able to provision terraform resources in your Java application. Make sure you have already put a terraform file `storage.tf` under `/some/local/path/` folder; and then use the Java code snippet below to invoke `terraform` executable operate on the resources defined in `storage.tf`. In this example, we also assume that you are provisioning Azure specific resource, which means you need to set some Azure related credentials.
 
 ```java
-TerraformOptions options = new TerraformOptions();
-options.setArmSubscriptionId("<Azure Subscription ID>");
-options.setArmClientId("<Azure Client ID>");
-options.setArmClientSecret("<Azure Client Secret>");
-options.setArmTenantId("<Azure Tenant ID>");
+HashMap<String, String> options = new HashMap<>();
+options.put("ARM_SUBSCRIPTION_ID","<Azure Subscription ID>");
+options.put("ARM_CLIENT_ID","<Azure Client ID>");
+options.put("ARM_CLIENT_SECRET","<Azure Client Secret>");
+options.put("ARM_TENANT_ID","<Azure Tenant ID>");
 
 try (TerraformClient client = new TerraformClient(options)) {
     client.setOutputListener(System.out::println);
@@ -48,7 +48,7 @@ Let's still use the terraform file `storage.tf` under `/some/local/path/` folder
 <dependency>
     <groupId>com.microsoft.terraform</groupId>
     <artifactId>terraform-spring-boot-starter</artifactId>
-    <version>1.0.0</version>
+    <version>0.0.1</version>
 </dependency>
 ```
 
@@ -80,7 +80,7 @@ public class SpringStarterSampleApp implements CommandLineRunner {
             this.terraform.setErrorListener(System.err::println);
 
             this.terraform.setWorkingDirectory("/some/local/path/");
-            this.terraform..plan().get();
+            this.terraform.plan().get();
             this.terraform.apply().get();
         } finally {
             this.terraform.close();
@@ -88,18 +88,3 @@ public class SpringStarterSampleApp implements CommandLineRunner {
     }
 }
 ```
-
-
-## Contributing
-
-This project welcomes contributions and suggestions.  Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit https://cla.microsoft.com.
-
-When you submit a pull request, a CLA-bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., label, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
-
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.

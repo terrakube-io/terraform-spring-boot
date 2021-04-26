@@ -1,10 +1,7 @@
-package com.microsoft.terraform.spring.autoconfigure;
+package org.azbuilder.terraform;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
-@ConfigurationProperties("terraform")
-public class TerraformProperties {
-    private String armSubscriptionId, armClientId, armClientSecret, armTenantId;
+public class TerraformOptions {
+	private String armSubscriptionId, armClientId, armClientSecret, armTenantId;
 
 	public String getArmSubscriptionId() {
 		return this.armSubscriptionId;

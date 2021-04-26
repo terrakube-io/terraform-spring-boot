@@ -1,9 +1,16 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.microsoft.terraform.samples</groupId>
+  <parent>
+    <groupId>org.azbuilder</groupId>
+    <artifactId>terraform</artifactId>
+    <version>${revision}</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <groupId>org.azbuilder.terraform.samples</groupId>
   <artifactId>terraform-spring-boot-samples-solution</artifactId>
-  <version>1.0.0</version>
+  <version>${revision}</version>
   <packaging>pom</packaging>
 
   <name>Terraform Spring Boot samples solution</name>
@@ -13,16 +20,10 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
 
-  <scm>
-    <connection>scm:git:git://github.com/Microsoft/terraform-spring-boot.git</connection>
-    <developerConnection>scm:git:ssh://github.com:Microsoft/terraform-spring-boot.git</developerConnection>
-    <url>https://github.com/Microsoft/terraform-spring-boot/tree/master</url>
-  </scm>
-
   <licenses>
     <license>
       <name>MIT</name>
-      <url>https://github.com/Microsoft/terraform-spring-boot/blob/master/LICENSE</url>
+      <url>https://github.com/AzBuilder/terraform-spring-boot/blob/master/LICENSE</url>
       <distribution>repo</distribution>
     </license>
   </licenses>

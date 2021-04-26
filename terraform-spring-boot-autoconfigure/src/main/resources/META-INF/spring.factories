@@ -1,2 +1,2 @@
 org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
-com.microsoft.terraform.spring.autoconfigure.TerraformAutoConfiguration
+org.azbuilder.terraform.spring.autoconfigure.TerraformAutoConfiguration

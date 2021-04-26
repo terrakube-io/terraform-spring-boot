@@ -1,10 +1,11 @@
-package com.microsoft.terraform.spring.autoconfigure;
+package org.azbuilder.terraform.spring.autoconfigure;
 
+import org.azbuilder.terraform.TerraformClient;
 import org.springframework.boot.autoconfigure.condition.*;
 import org.springframework.boot.context.properties.*;
 import org.springframework.context.annotation.*;
 
-import com.microsoft.terraform.*;
+import org.azbuilder.terraform.*;
 
 @Configuration
 @EnableConfigurationProperties(TerraformProperties.class)
@@ -19,11 +20,6 @@ public class TerraformAutoConfiguration {
 
     @Bean
     public TerraformClient terraformClient() {
-        TerraformOptions tfOptions = new TerraformOptions();
-        tfOptions.setArmSubscriptionId(this.tfProperties.getArmSubscriptionId());
-        tfOptions.setArmClientId(this.tfProperties.getArmClientId());
-        tfOptions.setArmClientSecret(this.tfProperties.getArmClientSecret());
-        tfOptions.setArmTenantId(this.tfProperties.getArmTenantId());
-        return new TerraformClient(tfOptions);
+        return new TerraformClient();
     }
 }

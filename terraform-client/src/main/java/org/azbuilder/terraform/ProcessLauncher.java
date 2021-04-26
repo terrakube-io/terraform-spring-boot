@@ -1,4 +1,4 @@
-package com.microsoft.terraform;
+package org.azbuilder.terraform;
 
 import java.io.*;
 import java.util.*;

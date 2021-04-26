@@ -2,23 +2,24 @@
   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>com.microsoft.terraform.samples</groupId>
+  <parent>
+    <groupId>org.azbuilder.terraform.samples</groupId>
+    <artifactId>terraform-spring-boot-samples-solution</artifactId>
+    <version>${revision}</version>
+    <relativePath>../pom.xml</relativePath>
+  </parent>
+
+  <groupId>org.azbuilder.terraform.samples</groupId>
   <artifactId>terraform-raw-client-lib</artifactId>
-  <version>1.0.0</version>
+  <version>${revision}</version>
   <packaging>jar</packaging>
 
   <name>Using raw Terraform client library sample</name>
-  <url>https://github.com/Microsoft/terraform-spring-boot</url>
+  <url>https://github.com/AzBuilder/terraform-spring-boot</url>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
   </properties>
-
-  <scm>
-    <connection>scm:git:git://github.com/Microsoft/terraform-spring-boot.git</connection>
-    <developerConnection>scm:git:ssh://github.com:Microsoft/terraform-spring-boot.git</developerConnection>
-    <url>https://github.com/Microsoft/terraform-spring-boot/tree/master</url>
-  </scm>
 
   <licenses>
     <license>
@@ -43,22 +44,10 @@
 
   <dependencies>
     <dependency>
-      <groupId>com.microsoft.terraform</groupId>
+      <groupId>org.azbuilder.terraform</groupId>
       <artifactId>terraform-client</artifactId>
-      <version>1.0.0</version>
+      <version>${revision}</version>
     </dependency>
   </dependencies>
 
-  <build>
-    <plugins>
-      <plugin>
-        <artifactId>maven-compiler-plugin</artifactId>
-        <version>3.7.0</version>
-        <configuration>
-          <source>1.8</source>
-          <target>1.8</target>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
 </project>
