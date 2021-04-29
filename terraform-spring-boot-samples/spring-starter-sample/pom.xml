@@ -1,71 +1,77 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
 
-  <parent>
+    <parent>
+        <groupId>org.azbuilder.terraform.samples</groupId>
+        <artifactId>terraform-spring-boot-samples-solution</artifactId>
+        <version>${revision}</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
     <groupId>org.azbuilder.terraform.samples</groupId>
-    <artifactId>terraform-spring-boot-samples-solution</artifactId>
+    <artifactId>terraform-spring-starter</artifactId>
     <version>${revision}</version>
-    <relativePath>../pom.xml</relativePath>
-  </parent>
+    <packaging>jar</packaging>
 
-  <groupId>org.azbuilder.terraform.samples</groupId>
-  <artifactId>terraform-spring-starter</artifactId>
-  <version>${revision}</version>
-  <packaging>jar</packaging>
+    <name>Terraform Spring Boot Starter Sample App</name>
+    <url>https://github.com/Microsoft/terraform-spring-boot</url>
 
-  <name>Terraform Spring Boot Starter Sample App</name>
-  <url>https://github.com/Microsoft/terraform-spring-boot</url>
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
 
-  <properties>
-    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-  </properties>
+    <licenses>
+        <license>
+            <name>MIT</name>
+            <url>https://github.com/Microsoft/terraform-spring-boot/blob/master/LICENSE</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
-  <licenses>
-    <license>
-      <name>MIT</name>
-      <url>https://github.com/Microsoft/terraform-spring-boot/blob/master/LICENSE</url>
-      <distribution>repo</distribution>
-    </license>
-  </licenses>
+    <organization>
+        <name>Microsoft</name>
+        <url>https://www.microsoft.com</url>
+    </organization>
 
-  <organization>
-    <name>Microsoft</name>
-    <url>https://www.microsoft.com</url>
-  </organization>
+    <developers>
+        <developer>
+            <id>JunyiYi</id>
+            <name>Junyi Yi</name>
+            <email>junyi@microsoft.com</email>
+        </developer>
+    </developers>
 
-  <developers>
-    <developer>
-      <id>JunyiYi</id>
-      <name>Junyi Yi</name>
-      <email>junyi@microsoft.com</email>
-    </developer>
-  </developers>
-
-  <dependencies>
-    <dependency>
-      <groupId>org.azbuilder.terraform</groupId>
-      <artifactId>terraform-spring-boot-starter</artifactId>
-      <version>${revision}</version>
-    </dependency>
-    <dependency>
-      <groupId>org.springframework.boot</groupId>
-      <artifactId>spring-boot-starter-test</artifactId>
-      <scope>test</scope>
-    </dependency>
-  </dependencies>
+    <dependencies>
+        <dependency>
+            <groupId>org.azbuilder.terraform</groupId>
+            <artifactId>terraform-spring-boot-starter</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 
 
-  <build>
-    <plugins>
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-surefire-plugin</artifactId>
-        <configuration>
-          <forkedProcessExitTimeoutInSeconds>120</forkedProcessExitTimeoutInSeconds>
-        </configuration>
-      </plugin>
-    </plugins>
-  </build>
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-deploy-plugin</artifactId>
+                <configuration>
+                    <skip>true</skip>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <forkedProcessExitTimeoutInSeconds>120</forkedProcessExitTimeoutInSeconds>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
 
 </project>

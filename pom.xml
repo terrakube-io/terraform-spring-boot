@@ -28,6 +28,14 @@
     </license>
   </licenses>
 
+  <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/AzBuilder/terraform-spring-boot</url>
+    </repository>
+  </distributionManagement>
+
   <organization>
     <name>Microsoft</name>
     <url>https://www.microsoft.com</url>

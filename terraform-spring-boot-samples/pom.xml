@@ -1,48 +1,63 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
 
-  <parent>
-    <groupId>org.azbuilder</groupId>
-    <artifactId>terraform</artifactId>
+    <parent>
+        <groupId>org.azbuilder</groupId>
+        <artifactId>terraform</artifactId>
+        <version>${revision}</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <groupId>org.azbuilder.terraform.samples</groupId>
+    <artifactId>terraform-spring-boot-samples-solution</artifactId>
     <version>${revision}</version>
-    <relativePath>../pom.xml</relativePath>
-  </parent>
+    <packaging>pom</packaging>
 
-  <groupId>org.azbuilder.terraform.samples</groupId>
-  <artifactId>terraform-spring-boot-samples-solution</artifactId>
-  <version>${revision}</version>
-  <packaging>pom</packaging>
+    <name>Terraform Spring Boot samples solution</name>
+    <url>https://github.com/Microsoft/terraform-spring-boot</url>
 
-  <name>Terraform Spring Boot samples solution</name>
-  <url>https://github.com/Microsoft/terraform-spring-boot</url>
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
 
-  <properties>
-    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-  </properties>
+    <licenses>
+        <license>
+            <name>MIT</name>
+            <url>https://github.com/AzBuilder/terraform-spring-boot/blob/master/LICENSE</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
-  <licenses>
-    <license>
-      <name>MIT</name>
-      <url>https://github.com/AzBuilder/terraform-spring-boot/blob/master/LICENSE</url>
-      <distribution>repo</distribution>
-    </license>
-  </licenses>
+    <organization>
+        <name>Microsoft</name>
+        <url>https://www.microsoft.com</url>
+    </organization>
 
-  <organization>
-    <name>Microsoft</name>
-    <url>https://www.microsoft.com</url>
-  </organization>
+    <developers>
+        <developer>
+            <id>JunyiYi</id>
+            <name>Junyi Yi</name>
+            <email>junyi@microsoft.com</email>
+        </developer>
+    </developers>
 
-  <developers>
-    <developer>
-      <id>JunyiYi</id>
-      <name>Junyi Yi</name>
-      <email>junyi@microsoft.com</email>
-    </developer>
-  </developers>
+    <modules>
+        <module>raw-client-library-sample</module>
+        <module>spring-starter-sample</module>
+    </modules>
 
-  <modules>
-    <module>raw-client-library-sample</module>
-    <module>spring-starter-sample</module>
-  </modules>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <artifactId>maven-deploy-plugin</artifactId>
+                    <configuration>
+                        <skip>true</skip>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
 </project>
