@@ -1,4 +1,4 @@
-package com.microsoft.samples;
+package org.azbuilder.samples;
 
 import java.io.*;
 import java.util.*;
@@ -11,12 +11,14 @@ public final class RawClientLibSampleApp {
             System.out.println("Working folder path argument missing");
             System.exit(1);
         }
-        HashMap<String, String> options = new HashMap<>();
-        options.put("ARM_SUBSCRIPTION_ID","<Azure Subscription ID>");
-        options.put("ARM_CLIENT_ID","<Azure Client ID>");
-        options.put("ARM_CLIENT_SECRET","<Azure Client Secret>");
-        options.put("ARM_TENANT_ID","<Azure Tenant ID>");
-        try (TerraformClient client = new TerraformClient(options)) {
+        HashMap<String, String> environmentVariables = new HashMap<>();
+        environmentVariables.put("ARM_SUBSCRIPTION_ID","<Azure Subscription ID>");
+        environmentVariables.put("ARM_CLIENT_ID","<Azure Client ID>");
+        environmentVariables.put("ARM_CLIENT_SECRET","<Azure Client Secret>");
+        environmentVariables.put("ARM_TENANT_ID","<Azure Tenant ID>");
+
+        HashMap<String, String> terraformParameters = new HashMap<>();
+        try (TerraformClient client = new TerraformClient(terraformParameters, environmentVariables)) {
             System.out.println(client.version().get());
             client.setOutputListener(System.out::println);
             client.setErrorListener(System.err::println);

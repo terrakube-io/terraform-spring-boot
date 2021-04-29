@@ -60,6 +60,12 @@
     </dependency>
 
     <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <scope>provided</scope>
+    </dependency>
+
+    <dependency>
       <groupId>org.azbuilder.terraform</groupId>
       <artifactId>terraform-client</artifactId>
       <version>${revision}</version>

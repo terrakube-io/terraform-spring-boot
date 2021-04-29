@@ -52,13 +52,10 @@ Let's still use the terraform file `storage.tf` under `/some/local/path/` folder
 </dependency>
 ```
 
-And now let's also introduce the Azure credentials in `application.properties`:
+And now let's also introduce the Azure credentials in `application.properties` or `application-${spring.profiles.active}.properties`:
 
 ```
-terraform.armSubscriptionId=<Azure Subscription ID>
-terraform.armClientId=<Azure Client ID>
-terraform.armClientSecret=<Azure Client Secret>
-terraform.armTenantId=<Azure Tenant ID>
+org.azbuilder.terraform.directory="some path"
 ```
 
 The final step is to let the Spring framework wire up everything in your spring boot application:

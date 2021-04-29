@@ -13,15 +13,31 @@ public class TerraformClient implements AutoCloseable {
     private File workingDirectory;
     private boolean inheritIO;
     private HashMap<String, String> environmentVariables;
+    private HashMap<String, String> terraformParameters;
     private Consumer<String> outputListener, errorListener;
 
     public TerraformClient() {
-        this(new HashMap<>());
+        this(null, new HashMap<>(), new HashMap<>());
     }
 
-    public TerraformClient(HashMap<String, String> environmentVariables) {
+    public TerraformClient(File workingDirectory) {
+        this(workingDirectory, new HashMap<>(), new HashMap<>());
+    }
+
+    public TerraformClient(File workingDirectory, HashMap<String, String> terraformParameters, HashMap<String, String> environmentVariables) {
         assert environmentVariables != null;
-        this.environmentVariables = environmentVariables;
+        assert environmentVariables != null;
+        assert terraformParameters != null;
+        this.setEnvironmentVariables(environmentVariables);
+        this.setTerraformParameters(terraformParameters);
+        this.workingDirectory = workingDirectory;
+    }
+
+    public TerraformClient(HashMap<String, String> terraformParameters, HashMap<String, String> environmentVariables) {
+        assert environmentVariables != null;
+        this.setEnvironmentVariables(environmentVariables);
+        this.setTerraformParameters(terraformParameters);
+        this.workingDirectory = workingDirectory;
     }
 
     public Consumer<String> getOutputListener() {
@@ -118,11 +134,17 @@ public class TerraformClient implements AutoCloseable {
         launcher.setDirectory(this.getWorkingDirectory());
         launcher.setInheritIO(this.isInheritIO());
 
-        for (Map.Entry<String, String> entry : this.environmentVariables.entrySet()) {
+        for (Map.Entry<String, String> entry : this.getEnvironmentVariables().entrySet()) {
             launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
         }
-        switch (command){
+
+        switch (command) {
             case apply:
+
+                for (Map.Entry<String, String> entry : this.getTerraformParameters().entrySet()) {
+                    launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
+                }
+
                 launcher.appendCommands("-auto-approve");
                 break;
             case destroy:
@@ -140,5 +162,21 @@ public class TerraformClient implements AutoCloseable {
         if (!this.executor.awaitTermination(5, TimeUnit.SECONDS)) {
             throw new RuntimeException("executor did not terminate");
         }
+    }
+
+    public HashMap<String, String> getEnvironmentVariables() {
+        return environmentVariables;
+    }
+
+    public void setEnvironmentVariables(HashMap<String, String> environmentVariables) {
+        this.environmentVariables = environmentVariables;
+    }
+
+    public HashMap<String, String> getTerraformParameters() {
+        return terraformParameters;
+    }
+
+    public void setTerraformParameters(HashMap<String, String> terraformParameters) {
+        this.terraformParameters = terraformParameters;
     }
 }

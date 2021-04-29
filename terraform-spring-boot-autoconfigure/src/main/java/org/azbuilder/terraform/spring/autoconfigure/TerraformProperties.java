@@ -1,40 +1,22 @@
 package org.azbuilder.terraform.spring.autoconfigure;
 
+import lombok.Getter;
+import lombok.Setter;
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.context.annotation.PropertySource;
+import org.springframework.context.annotation.PropertySources;
+import org.springframework.stereotype.Component;
 
-@ConfigurationProperties("terraform")
+@Component
+@Getter
+@Setter
+@PropertySources({
+		@PropertySource(value = "classpath:application.properties", ignoreResourceNotFound = true),
+		@PropertySource(value = "classpath:application-${spring.profiles.active}.properties", ignoreResourceNotFound = true)
+})
+@ConfigurationProperties(prefix = "org.azbuilder.terraform")
 public class TerraformProperties {
-    private String armSubscriptionId, armClientId, armClientSecret, armTenantId;
 
-	public String getArmSubscriptionId() {
-		return this.armSubscriptionId;
-	}
-
-	public void setArmSubscriptionId(String armSubscriptionId) {
-		this.armSubscriptionId = armSubscriptionId;
-	}
-
-	public String getArmClientId() {
-		return this.armClientId;
-	}
-
-	public void setArmClientId(String armClientId) {
-		this.armClientId = armClientId;
-	}
-
-	public String getArmClientSecret() {
-		return this.armClientSecret;
-	}
-
-	public void setArmClientSecret(String armClientSecret) {
-		this.armClientSecret = armClientSecret;
-	}
-
-	public String getArmTenantId() {
-		return this.armTenantId;
-	}
-
-	public void setArmTenantId(String armTenantId) {
-		this.armTenantId = armTenantId;
-	}
+	private String version;
+	private String directory;
 }
