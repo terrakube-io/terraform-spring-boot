@@ -2,10 +2,9 @@
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>org.azbuilder</groupId>
-    <artifactId>terraform</artifactId>
-    <version>${revision}</version>
-    <relativePath>../pom.xml</relativePath>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>2.4.3</version>
   </parent>
 
   <groupId>org.azbuilder.terraform</groupId>
@@ -19,6 +18,8 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <revision>0.0.1</revision>
+    <maven.deploy.skip>false</maven.deploy.skip>
   </properties>
 
   <licenses>
@@ -40,6 +41,19 @@
       <name>Junyi Yi</name>
       <email>junyi@microsoft.com</email>
     </developer>
+    <developer>
+      <id>alfespa17</id>
+      <name>Alfredo España</name>
+      <email>alfespa17@gmail.com</email>
+    </developer>
   </developers>
+
+  <distributionManagement>
+    <repository>
+      <id>github</id>
+      <name>GitHub Packages</name>
+      <url>https://maven.pkg.github.com/AzBuilder/terraform-spring-boot</url>
+    </repository>
+  </distributionManagement>
 
 </project>

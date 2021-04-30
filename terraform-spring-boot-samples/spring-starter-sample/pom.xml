@@ -19,6 +19,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <maven.deploy.skip>true</maven.deploy.skip>
     </properties>
 
     <licenses>
@@ -39,6 +40,11 @@
             <id>JunyiYi</id>
             <name>Junyi Yi</name>
             <email>junyi@microsoft.com</email>
+        </developer>
+        <developer>
+            <id>alfespa17</id>
+            <name>Alfredo España</name>
+            <email>alfespa17@gmail.com</email>
         </developer>
     </developers>
 
