@@ -34,10 +34,38 @@ try (TerraformClient client = new TerraformClient(options)) {
     client.setOutputListener(System.out::println);
     client.setErrorListener(System.err::println);
 
+    client.setTerraformVersion("0.15.0");
+    
     client.setWorkingDirectory("/some/local/path/");
     client.plan().get();
     client.apply().get();
 }
+```
+
+### Terraform Client Downloader library
+
+The client can download different terraform versions. These will be saved inside (UserHomeDirectory)/.terraform-spring-boot. 
+
+Example /home/user/.terraform-spring-boot
+
+```java
+TerraformDownloader terraformDownloader = new TerraformDownloader();
+
+System.out.println(terraformDownloader.downloadTerraformVersion("0.15.0"));
+System.out.println(terraformDownloader.downloadTerraformVersion("0.14.9"));
+
+TerraformClient terraformClient = new TerraformClient();
+
+System.out.println(terraformClient.version().get());
+terraformClient.setTerraformVersion("0.15.0");
+
+System.out.println(terraformClient.version().get());
+terraformClient.setTerraformVersion("0.14.9");
+
+System.out.println(terraformClient.version().get());
+terraformClient.setTerraformVersion("0.14.7");
+
+System.out.println(terraformClient.version().get());
 ```
 
 ### Spring boot
@@ -46,7 +74,7 @@ Let's still use the terraform file `storage.tf` under `/some/local/path/` folder
 
 ```xml
 <dependency>
-    <groupId>com.microsoft.terraform</groupId>
+    <groupId>org.azbuilder.terraform</groupId>
     <artifactId>terraform-spring-boot-starter</artifactId>
     <version>0.0.1</version>
 </dependency>

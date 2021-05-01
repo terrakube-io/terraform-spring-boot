@@ -1,36 +1,44 @@
 package org.azbuilder.terraform;
 
+import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.SystemUtils;
+
 import java.io.*;
 import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.*;
 
+@Slf4j
 public class TerraformClient implements AutoCloseable {
     private static final String TERRAFORM_COMMAND = "terraform";
 
     private final ExecutorService executor = Executors.newWorkStealingPool();
     private File workingDirectory;
     private boolean inheritIO;
+    private String terraformVersion;
+    private TerraformDownloader terraformDownloader;
     private HashMap<String, String> environmentVariables;
     private HashMap<String, String> terraformParameters;
     private Consumer<String> outputListener, errorListener;
 
     public TerraformClient() {
-        this(null, new HashMap<>(), new HashMap<>());
+        this(null, null, new HashMap<>(), new HashMap<>());
     }
 
     public TerraformClient(File workingDirectory) {
-        this(workingDirectory, new HashMap<>(), new HashMap<>());
+        this(null, workingDirectory, new HashMap<>(), new HashMap<>());
     }
 
-    public TerraformClient(File workingDirectory, HashMap<String, String> terraformParameters, HashMap<String, String> environmentVariables) {
+    public TerraformClient(String terraformVersion, File workingDirectory, HashMap<String, String> terraformParameters, HashMap<String, String> environmentVariables) {
         assert environmentVariables != null;
         assert environmentVariables != null;
         assert terraformParameters != null;
         this.setEnvironmentVariables(environmentVariables);
         this.setTerraformParameters(terraformParameters);
         this.workingDirectory = workingDirectory;
+        this.terraformDownloader = new TerraformDownloader();
+        this.terraformVersion = terraformVersion;
     }
 
     public TerraformClient(HashMap<String, String> terraformParameters, HashMap<String, String> environmentVariables) {
@@ -74,6 +82,14 @@ public class TerraformClient implements AutoCloseable {
 
     public void setInheritIO(boolean inheritIO) {
         this.inheritIO = inheritIO;
+    }
+
+    public void setTerraformVersion(String terraformVersion) {
+        this.terraformVersion = terraformVersion;
+    }
+
+    private String getTerraformVersion(String terraformVersion) throws IOException {
+        return this.terraformDownloader.downloadTerraformVersion(terraformVersion);
     }
 
     public CompletableFuture<String> version() throws IOException {
@@ -130,7 +146,7 @@ public class TerraformClient implements AutoCloseable {
     }
 
     private ProcessLauncher getTerraformLauncher(TerraformCommand command) throws IOException {
-        ProcessLauncher launcher = new ProcessLauncher(this.executor, TERRAFORM_COMMAND, command.name());
+        ProcessLauncher launcher = new ProcessLauncher(this.executor, (this.terraformVersion == null) ? TERRAFORM_COMMAND : getTerraformVersion(this.terraformVersion), command.name());
         launcher.setDirectory(this.getWorkingDirectory());
         launcher.setInheritIO(this.isInheritIO());
 
@@ -180,3 +196,4 @@ public class TerraformClient implements AutoCloseable {
         this.terraformParameters = terraformParameters;
     }
 }
+

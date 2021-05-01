@@ -1,59 +1,109 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
 
-  <parent>
-    <groupId>org.springframework.boot</groupId>
-    <artifactId>spring-boot-starter-parent</artifactId>
-    <version>2.4.3</version>
-  </parent>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>2.4.3</version>
+    </parent>
 
-  <groupId>org.azbuilder.terraform</groupId>
-  <artifactId>terraform-client</artifactId>
-  <version>${revision}</version>
-  <packaging>jar</packaging>
+    <groupId>org.azbuilder.terraform</groupId>
+    <artifactId>terraform-client</artifactId>
+    <version>${revision}</version>
+    <packaging>jar</packaging>
 
-  <name>Terraform Client for Java developers</name>
-  <description>Terraform client wrapper for Java developers</description>
-  <url>https://github.com/AzBuilder/terraform-spring-boot</url>
+    <name>Terraform Client for Java developers</name>
+    <description>Terraform client wrapper for Java developers</description>
+    <url>https://github.com/AzBuilder/terraform-spring-boot</url>
 
-  <properties>
-    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <revision>0.0.1</revision>
-    <maven.deploy.skip>false</maven.deploy.skip>
-  </properties>
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <revision>0.0.2</revision>
+        <maven.deploy.skip>false</maven.deploy.skip>
+        <okhttp.version>4.9.1</okhttp.version>
+        <commons-io.version>2.8.0</commons-io.version>
+    </properties>
 
-  <licenses>
-    <license>
-      <name>MIT</name>
-      <url>https://github.com/Microsoft/terraform-spring-boot/blob/master/LICENSE</url>
-      <distribution>repo</distribution>
-    </license>
-  </licenses>
+    <licenses>
+        <license>
+            <name>MIT</name>
+            <url>https://github.com/Microsoft/terraform-spring-boot/blob/master/LICENSE</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
 
-  <organization>
-    <name>Microsoft</name>
-    <url>https://www.microsoft.com</url>
-  </organization>
+    <organization>
+        <name>Microsoft</name>
+        <url>https://www.microsoft.com</url>
+    </organization>
 
-  <developers>
-    <developer>
-      <id>JunyiYi</id>
-      <name>Junyi Yi</name>
-      <email>junyi@microsoft.com</email>
-    </developer>
-    <developer>
-      <id>alfespa17</id>
-      <name>Alfredo España</name>
-      <email>alfespa17@gmail.com</email>
-    </developer>
-  </developers>
+    <developers>
+        <developer>
+            <id>JunyiYi</id>
+            <name>Junyi Yi</name>
+            <email>junyi@microsoft.com</email>
+        </developer>
+        <developer>
+            <id>alfespa17</id>
+            <name>Alfredo España</name>
+            <email>alfespa17@gmail.com</email>
+        </developer>
+    </developers>
 
-  <distributionManagement>
-    <repository>
-      <id>github</id>
-      <name>GitHub Packages</name>
-      <url>https://maven.pkg.github.com/AzBuilder/terraform-spring-boot</url>
-    </repository>
-  </distributionManagement>
+    <distributionManagement>
+        <repository>
+            <id>github</id>
+            <name>GitHub Packages</name>
+            <url>https://maven.pkg.github.com/AzBuilder/terraform-spring-boot</url>
+        </repository>
+    </distributionManagement>
+
+    <dependencies>
+        <!-- https://mvnrepository.com/artifact/commons-io/commons-io -->
+        <dependency>
+            <groupId>commons-io</groupId>
+            <artifactId>commons-io</artifactId>
+            <version>${commons-io.version}</version>
+        </dependency>
+
+        <!-- https://mvnrepository.com/artifact/com.squareup.okhttp3/okhttp -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>${okhttp.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-lang3 -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-lang3</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-slf4j-impl</artifactId>
+        </dependency>
+
+    </dependencies>
 
 </project>
