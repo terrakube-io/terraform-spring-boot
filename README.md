@@ -17,7 +17,7 @@ Simply add the following dependency to your project's `pom.xml` will enable you 
 <dependency>
     <groupId>org.azbuilder.terraform</groupId>
     <artifactId>terraform-client</artifactId>
-    <version>0.0.2</version>
+    <version>0.0.3</version>
 </dependency>
 ```
 
@@ -76,7 +76,7 @@ Let's still use the terraform file `storage.tf` under `/some/local/path/` folder
 <dependency>
     <groupId>org.azbuilder.terraform</groupId>
     <artifactId>terraform-spring-boot-starter</artifactId>
-    <version>0.0.2</version>
+    <version>0.0.3</version>
 </dependency>
 ```
 

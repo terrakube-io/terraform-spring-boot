@@ -173,8 +173,8 @@ public class TerraformDownloader {
                 fos.close();
 
                 if(SystemUtils.IS_OS_LINUX){
-                    File updateAcces = new File(newFilePath);
-                    updateAcces.setExecutable(true,true);
+                    File updateAccess = new File(newFilePath);
+                    updateAccess.setExecutable(true,true);
                 }
             }
             zipEntry = zis.getNextEntry();
