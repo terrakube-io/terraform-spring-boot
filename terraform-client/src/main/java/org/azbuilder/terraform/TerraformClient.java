@@ -155,12 +155,15 @@ public class TerraformClient implements AutoCloseable {
         }
 
         switch (command) {
-            case apply:
-
+            case plan:
                 for (Map.Entry<String, String> entry : this.getTerraformParameters().entrySet()) {
                     launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
                 }
-
+                break;
+            case apply:
+                for (Map.Entry<String, String> entry : this.getTerraformParameters().entrySet()) {
+                    launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
+                }
                 launcher.appendCommands("-auto-approve");
                 break;
             case destroy:
