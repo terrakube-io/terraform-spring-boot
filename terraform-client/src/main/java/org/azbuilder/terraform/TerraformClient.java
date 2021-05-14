@@ -1,7 +1,6 @@
 package org.azbuilder.terraform;
 
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.SystemUtils;
 
 import java.io.*;
 import java.nio.file.*;
@@ -17,6 +16,7 @@ public class TerraformClient implements AutoCloseable {
     private File workingDirectory;
     private boolean inheritIO;
     private String terraformVersion;
+    private String backendConfig;
     private TerraformDownloader terraformDownloader;
     private HashMap<String, String> environmentVariables;
     private HashMap<String, String> terraformParameters;
@@ -155,6 +155,11 @@ public class TerraformClient implements AutoCloseable {
         }
 
         switch (command) {
+            case init:
+                if(getBackendConfig() !=null){
+                    launcher.appendCommands("-backend-config=".concat(this.getBackendConfig()));
+                }
+                break;
             case plan:
                 for (Map.Entry<String, String> entry : this.getTerraformParameters().entrySet()) {
                     launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
@@ -197,6 +202,14 @@ public class TerraformClient implements AutoCloseable {
 
     public void setTerraformParameters(HashMap<String, String> terraformParameters) {
         this.terraformParameters = terraformParameters;
+    }
+
+    public String getBackendConfig() {
+        return backendConfig;
+    }
+
+    public void setBackendConfig(String backendConfig) {
+        this.backendConfig = backendConfig;
     }
 }
 
