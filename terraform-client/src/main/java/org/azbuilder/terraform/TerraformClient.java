@@ -1,6 +1,7 @@
 package org.azbuilder.terraform;
 
 import lombok.extern.slf4j.Slf4j;
+import org.apache.maven.artifact.versioning.ComparableVersion;
 
 import java.io.*;
 import java.nio.file.*;
@@ -143,6 +144,9 @@ public class TerraformClient implements AutoCloseable {
         if (this.getWorkingDirectory() == null) {
             throw new IllegalArgumentException("working directory should not be null");
         }
+        if (this.terraformVersion == null) {
+            throw new IllegalArgumentException("Terraform version should not be null");
+        }
     }
 
     private ProcessLauncher getTerraformLauncher(TerraformCommand command) throws IOException {
@@ -156,7 +160,7 @@ public class TerraformClient implements AutoCloseable {
 
         switch (command) {
             case init:
-                if(getBackendConfig() !=null){
+                if (getBackendConfig() != null) {
                     launcher.appendCommands("-backend-config=".concat(this.getBackendConfig()));
                 }
                 break;
@@ -172,7 +176,12 @@ public class TerraformClient implements AutoCloseable {
                 launcher.appendCommands("-auto-approve");
                 break;
             case destroy:
-                launcher.appendCommands("-force");
+                ComparableVersion version0_15_0 = new ComparableVersion("0.15.0"); //https://www.terraform.io/upgrade-guides/0-15.html#other-minor-command-line-behavior-changes
+                ComparableVersion version = new ComparableVersion(this.terraformVersion);
+                if (version.compareTo(version0_15_0) < 0)
+                    launcher.appendCommands("-force");
+                else
+                    launcher.appendCommands("-auto-approve");
                 break;
         }
         launcher.setOutputListener(this.getOutputListener());

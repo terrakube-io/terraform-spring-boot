@@ -17,7 +17,7 @@ Simply add the following dependency to your project's `pom.xml` will enable you 
 <dependency>
     <groupId>org.azbuilder.terraform</groupId>
     <artifactId>terraform-client</artifactId>
-    <version>0.0.3</version>
+    <version>0.0.6</version>
 </dependency>
 ```
 
@@ -56,16 +56,15 @@ System.out.println(terraformDownloader.downloadTerraformVersion("0.14.9"));
 
 TerraformClient terraformClient = new TerraformClient();
 
-System.out.println(terraformClient.version().get());
 terraformClient.setTerraformVersion("0.15.0");
-
 System.out.println(terraformClient.version().get());
+
 terraformClient.setTerraformVersion("0.14.9");
-
 System.out.println(terraformClient.version().get());
+
 terraformClient.setTerraformVersion("0.14.7");
-
 System.out.println(terraformClient.version().get());
+
 ```
 
 ### Spring boot
@@ -76,7 +75,7 @@ Let's still use the terraform file `storage.tf` under `/some/local/path/` folder
 <dependency>
     <groupId>org.azbuilder.terraform</groupId>
     <artifactId>terraform-spring-boot-starter</artifactId>
-    <version>0.0.3</version>
+    <version>0.0.6</version>
 </dependency>
 ```
 
@@ -104,6 +103,7 @@ public class SpringStarterSampleApp implements CommandLineRunner {
             this.terraform.setOutputListener(System.out::println);
             this.terraform.setErrorListener(System.err::println);
 
+            this.terraform.setTerraformVersion("0.15.0");
             this.terraform.setWorkingDirectory("/some/local/path/");
             this.terraform.plan().get();
             this.terraform.apply().get();

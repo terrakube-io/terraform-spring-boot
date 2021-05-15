@@ -19,9 +19,9 @@ public final class RawClientLibSampleApp {
 
         TerraformClient terraformClient = new TerraformClient();
 
-        System.out.println(terraformClient.version().get());
         terraformClient.setTerraformVersion("0.15.0");
         System.out.println(terraformClient.version().get());
+
         terraformClient.setTerraformVersion("0.14.9");
         System.out.println(terraformClient.version().get());
         terraformClient.setTerraformVersion("0.14.7");
