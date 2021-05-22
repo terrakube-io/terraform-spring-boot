@@ -17,7 +17,7 @@ Simply add the following dependency to your project's `pom.xml` will enable you 
 <dependency>
     <groupId>org.azbuilder.terraform</groupId>
     <artifactId>terraform-client</artifactId>
-    <version>0.0.6</version>
+    <version>0.1.0</version>
 </dependency>
 ```
 
