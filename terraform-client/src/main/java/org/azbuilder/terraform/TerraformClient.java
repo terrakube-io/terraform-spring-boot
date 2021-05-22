@@ -256,7 +256,7 @@ public class TerraformClient implements AutoCloseable {
     private ProcessLauncher getTerraformLauncher(String terraformVersion, File workingDirectory, String terraformBackendConfigFileName, Map<String, String> terraformVariables, Map<String, String> terraformEnvironmentVariables, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand command) throws IOException {
         ProcessLauncher launcher = new ProcessLauncher(this.executor, getTerraformVersion(terraformVersion), command.name());
         launcher.setDirectory(workingDirectory);
-        launcher.setInheritIO(false);
+        launcher.setInheritIO(this.isInheritIO());
 
         for (Map.Entry<String, String> entry : terraformEnvironmentVariables.entrySet()) {
             launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
