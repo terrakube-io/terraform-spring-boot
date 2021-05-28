@@ -72,7 +72,7 @@ public class TerraformClient implements AutoCloseable {
                 terraformEnvironmentVariables,
                 outputListener,
                 errorListener,
-                TerraformCommand.init, TerraformCommand.apply);
+                TerraformCommand.init, TerraformCommand.plan, TerraformCommand.apply);
     }
 
     public CompletableFuture<Boolean> apply() throws IOException {
@@ -204,8 +204,8 @@ public class TerraformClient implements AutoCloseable {
         launcher.setDirectory(workingDirectory);
         launcher.setInheritIO(this.isInheritIO());
 
-        if (this.environmentVariables != null)
-            for (Map.Entry<String, String> entry : this.environmentVariables.entrySet()) {
+        if (terraformEnvironmentVariables != null)
+            for (Map.Entry<String, String> entry : terraformEnvironmentVariables.entrySet()) {
                 launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
             }
 
