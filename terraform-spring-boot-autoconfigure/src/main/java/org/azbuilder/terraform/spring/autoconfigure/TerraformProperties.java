@@ -10,13 +10,10 @@ import org.springframework.stereotype.Component;
 @Component
 @Getter
 @Setter
-@PropertySources({
-		@PropertySource(value = "classpath:application.properties", ignoreResourceNotFound = true),
-		@PropertySource(value = "classpath:application-${spring.profiles.active}.properties", ignoreResourceNotFound = true)
-})
-@ConfigurationProperties(prefix = "org.azbuilder.terraform")
+@PropertySource(value = "classpath:application.properties", ignoreResourceNotFound = true)
+@PropertySource(value = "classpath:application-${spring.profiles.active}.properties", ignoreResourceNotFound = true)
+@ConfigurationProperties(prefix = "org.azbuilder.terraform.flags")
 public class TerraformProperties {
 
-	private String version;
-	private String directory;
+    private boolean enableColor;
 }

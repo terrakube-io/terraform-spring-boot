@@ -1,97 +1,37 @@
 package org.azbuilder.terraform;
 
-import lombok.NonNull;
+import lombok.*;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.maven.artifact.versioning.ComparableVersion;
 
 import java.io.*;
-import java.nio.file.*;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.*;
 
+@Builder
+@AllArgsConstructor(access = AccessLevel.PROTECTED)
+@NoArgsConstructor
+@Getter
+@Setter
 @Slf4j
 public class TerraformClient implements AutoCloseable {
 
     private final ExecutorService executor = Executors.newWorkStealingPool();
+    private final TerraformDownloader terraformDownloader = new TerraformDownloader();
+
     private File workingDirectory;
     private boolean inheritIO;
+    private boolean showColor;
     private String terraformVersion;
     private String backendConfig;
-    private TerraformDownloader terraformDownloader;
-    private HashMap<String, String> environmentVariables;
-    private HashMap<String, String> terraformParameters;
-    private Consumer<String> outputListener, errorListener;
 
-    public TerraformClient() {
-        this(null, null, new HashMap<>(), new HashMap<>());
-    }
-
-    public TerraformClient(File workingDirectory) {
-        this(null, workingDirectory, new HashMap<>(), new HashMap<>());
-    }
-
-    public TerraformClient(String terraformVersion, File workingDirectory, HashMap<String, String> terraformParameters, HashMap<String, String> environmentVariables) {
-        assert environmentVariables != null;
-        assert environmentVariables != null;
-        assert terraformParameters != null;
-        this.setEnvironmentVariables(environmentVariables);
-        this.setTerraformParameters(terraformParameters);
-        this.workingDirectory = workingDirectory;
-        this.terraformDownloader = new TerraformDownloader();
-        this.terraformVersion = terraformVersion;
-    }
-
-    public TerraformClient(HashMap<String, String> terraformParameters, HashMap<String, String> environmentVariables) {
-        assert environmentVariables != null;
-        this.setEnvironmentVariables(environmentVariables);
-        this.setTerraformParameters(terraformParameters);
-        this.workingDirectory = workingDirectory;
-    }
-
-    public Consumer<String> getOutputListener() {
-        return this.outputListener;
-    }
-
-    public void setOutputListener(Consumer<String> listener) {
-        this.outputListener = listener;
-    }
-
-    public Consumer<String> getErrorListener() {
-        return this.errorListener;
-    }
-
-    public void setErrorListener(Consumer<String> listener) {
-        this.errorListener = listener;
-    }
-
-    public File getWorkingDirectory() {
-        return workingDirectory;
-    }
-
-    public void setWorkingDirectory(File workingDirectory) {
-        this.workingDirectory = workingDirectory;
-    }
-
-    public void setWorkingDirectory(Path folderPath) {
-        this.setWorkingDirectory(folderPath.toFile());
-    }
-
-    public boolean isInheritIO() {
-        return this.inheritIO;
-    }
-
-    public void setInheritIO(boolean inheritIO) {
-        this.inheritIO = inheritIO;
-    }
-
-    public void setTerraformVersion(String terraformVersion) {
-        this.terraformVersion = terraformVersion;
-    }
-
-    private String getTerraformVersion(String terraformVersion) throws IOException {
-        return this.terraformDownloader.downloadTerraformVersion(terraformVersion);
-    }
+    @Singular
+    private Map<String, String> environmentVariables;
+    @Singular
+    private Map<String, String> terraformParameters;
+    private Consumer<String> outputListener;
+    private Consumer<String> errorListener;
 
     public CompletableFuture<String> version() throws IOException {
         ProcessLauncher launcher = this.getTerraformLauncher(TerraformCommand.version);
@@ -213,29 +153,32 @@ public class TerraformClient implements AutoCloseable {
     }
 
     private ProcessLauncher getTerraformLauncher(TerraformCommand command) throws IOException {
-        ProcessLauncher launcher = new ProcessLauncher(this.executor, getTerraformVersion(this.terraformVersion), command.name());
+        ProcessLauncher launcher = new ProcessLauncher(this.executor, this.terraformDownloader.downloadTerraformVersion(this.terraformVersion), command.name());
         launcher.setDirectory(this.getWorkingDirectory());
         launcher.setInheritIO(this.isInheritIO());
 
-        for (Map.Entry<String, String> entry : this.getEnvironmentVariables().entrySet()) {
-            launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
-        }
+        if (this.environmentVariables != null)
+            for (Map.Entry<String, String> entry : this.environmentVariables.entrySet()) {
+                launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
+            }
 
         switch (command) {
             case init:
-                if (getBackendConfig() != null) {
+                if (this.backendConfig != null) {
                     launcher.appendCommands("-backend-config=".concat(this.getBackendConfig()));
                 }
                 break;
             case plan:
-                for (Map.Entry<String, String> entry : this.getTerraformParameters().entrySet()) {
-                    launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
-                }
+                if (this.terraformParameters != null)
+                    for (Map.Entry<String, String> entry : this.terraformParameters.entrySet()) {
+                        launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
+                    }
                 break;
             case apply:
-                for (Map.Entry<String, String> entry : this.getTerraformParameters().entrySet()) {
-                    launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
-                }
+                if (this.terraformParameters != null)
+                    for (Map.Entry<String, String> entry : this.getTerraformParameters().entrySet()) {
+                        launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
+                    }
                 launcher.appendCommands("-auto-approve");
                 break;
             case destroy:
@@ -247,6 +190,9 @@ public class TerraformClient implements AutoCloseable {
                     launcher.appendCommands("-auto-approve");
                 break;
         }
+        if (!this.showColor)
+            launcher.appendCommands("-no-color");
+
         launcher.setOutputListener(this.getOutputListener());
         launcher.setErrorListener(this.getErrorListener());
         return launcher;
@@ -254,13 +200,14 @@ public class TerraformClient implements AutoCloseable {
 
 
     private ProcessLauncher getTerraformLauncher(String terraformVersion, File workingDirectory, String terraformBackendConfigFileName, Map<String, String> terraformVariables, Map<String, String> terraformEnvironmentVariables, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand command) throws IOException {
-        ProcessLauncher launcher = new ProcessLauncher(this.executor, getTerraformVersion(terraformVersion), command.name());
+        ProcessLauncher launcher = new ProcessLauncher(this.executor, this.terraformDownloader.downloadTerraformVersion(terraformVersion), command.name());
         launcher.setDirectory(workingDirectory);
         launcher.setInheritIO(this.isInheritIO());
 
-        for (Map.Entry<String, String> entry : terraformEnvironmentVariables.entrySet()) {
-            launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
-        }
+        if (this.environmentVariables != null)
+            for (Map.Entry<String, String> entry : this.environmentVariables.entrySet()) {
+                launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
+            }
 
         switch (command) {
             case init:
@@ -288,6 +235,10 @@ public class TerraformClient implements AutoCloseable {
                     launcher.appendCommands("-auto-approve");
                 break;
         }
+
+        if (!this.showColor)
+            launcher.appendCommands("-no-color");
+
         launcher.setOutputListener(outputListener);
         launcher.setErrorListener(errorListener);
         return launcher;
@@ -299,30 +250,6 @@ public class TerraformClient implements AutoCloseable {
         if (!this.executor.awaitTermination(5, TimeUnit.SECONDS)) {
             throw new RuntimeException("executor did not terminate");
         }
-    }
-
-    public HashMap<String, String> getEnvironmentVariables() {
-        return environmentVariables;
-    }
-
-    public void setEnvironmentVariables(HashMap<String, String> environmentVariables) {
-        this.environmentVariables = environmentVariables;
-    }
-
-    public HashMap<String, String> getTerraformParameters() {
-        return terraformParameters;
-    }
-
-    public void setTerraformParameters(HashMap<String, String> terraformParameters) {
-        this.terraformParameters = terraformParameters;
-    }
-
-    public String getBackendConfig() {
-        return backendConfig;
-    }
-
-    public void setBackendConfig(String backendConfig) {
-        this.backendConfig = backendConfig;
     }
 }
 

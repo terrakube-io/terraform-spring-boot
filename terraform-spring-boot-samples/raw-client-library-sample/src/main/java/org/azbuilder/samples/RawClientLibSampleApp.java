@@ -35,7 +35,7 @@ public final class RawClientLibSampleApp {
 
         HashMap<String, String> terraformParameters = new HashMap<>();
 
-        try (TerraformClient client = new TerraformClient(terraformParameters, environmentVariables)) {
+        try (TerraformClient client = TerraformClient.builder().terraformParameters(terraformParameters).environmentVariables(environmentVariables).build()) {
 
             System.out.println(client.version().get());
             client.setOutputListener(System.out::println);
