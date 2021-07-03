@@ -18,8 +18,9 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <revision>0.2.1</revision>
+    <revision>0.3.0</revision>
     <maven.deploy.skip>false</maven.deploy.skip>
+    <lombok.version>1.18.20</lombok.version>
   </properties>
 
   <licenses>
@@ -83,6 +84,13 @@
       <groupId>org.azbuilder.terraform</groupId>
       <artifactId>terraform-client</artifactId>
       <version>${revision}</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.projectlombok</groupId>
+      <artifactId>lombok</artifactId>
+      <version>${lombok.version}</version>
+      <scope>provided</scope>
     </dependency>
   </dependencies>
 </project>

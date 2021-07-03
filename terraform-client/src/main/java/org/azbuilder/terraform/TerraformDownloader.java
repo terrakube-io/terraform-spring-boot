@@ -85,7 +85,11 @@ public class TerraformDownloader {
         String terraformFilePath = "";
         if (version != null) {
             for (TerraformBuild terraformBuild : version.getBuilds()) {
-                if (terraformBuild.getArch().equals(SystemUtils.OS_ARCH) && (SystemUtils.IS_OS_WINDOWS && terraformBuild.getOs().equals("windows") || SystemUtils.IS_OS_LINUX && terraformBuild.getOs().equals("linux"))) {
+                if (terraformBuild.getArch().equals(SystemUtils.OS_ARCH) && (
+                        SystemUtils.IS_OS_WINDOWS && terraformBuild.getOs().equals("windows") ||
+                        SystemUtils.IS_OS_LINUX && terraformBuild.getOs().equals("linux")) ||
+                        SystemUtils.IS_OS_MAC && terraformBuild.getOs().equals("darwin")
+                ) {
                     String terraformZipReleaseURL = terraformBuild.getUrl();
                     String fileName = terraformBuild.getFilename();
 
@@ -172,7 +176,7 @@ public class TerraformDownloader {
                 }
                 fos.close();
 
-                if(SystemUtils.IS_OS_LINUX){
+                if(SystemUtils.IS_OS_LINUX || SystemUtils.IS_OS_MAC){
                     File updateAccess = new File(newFilePath);
                     updateAccess.setExecutable(true,true);
                 }
