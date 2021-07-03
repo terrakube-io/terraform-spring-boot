@@ -1,6 +1,7 @@
 package org.azbuilder.samples;
 
 import org.azbuilder.terraform.TerraformClient;
+import org.azbuilder.terraform.TerraformDownloader;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -18,5 +19,7 @@ public class SpringStarterSampleTest {
     @Test
     void contextLoads() throws IOException, ExecutionException, InterruptedException {
         Assert.notNull(terraformClient,"TerraformClient is null");
+        //TerraformDownloader terraformDownloader = new TerraformDownloader();
+        //terraformDownloader.downloadTerraformVersion("0.15.0");
     }
 }
