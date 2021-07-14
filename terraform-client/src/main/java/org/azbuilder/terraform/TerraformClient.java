@@ -23,6 +23,7 @@ public class TerraformClient implements AutoCloseable {
     private File workingDirectory;
     private boolean inheritIO;
     private boolean showColor;
+    private boolean jsonOutput;
     private String terraformVersion;
     private String backendConfig;
 
@@ -162,6 +163,7 @@ public class TerraformClient implements AutoCloseable {
                 launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
             }
 
+        ComparableVersion version = new ComparableVersion(this.terraformVersion);
         switch (command) {
             case init:
                 if (this.backendConfig != null) {
@@ -183,7 +185,6 @@ public class TerraformClient implements AutoCloseable {
                 break;
             case destroy:
                 ComparableVersion version0_15_0 = new ComparableVersion("0.15.0"); //https://www.terraform.io/upgrade-guides/0-15.html#other-minor-command-line-behavior-changes
-                ComparableVersion version = new ComparableVersion(this.terraformVersion);
                 if (version.compareTo(version0_15_0) < 0)
                     launcher.appendCommands("-force");
                 else
@@ -192,6 +193,16 @@ public class TerraformClient implements AutoCloseable {
         }
         if (!this.showColor)
             launcher.appendCommands("-no-color");
+
+        //https://www.terraform.io/docs/internals/machine-readable-ui.html
+        if (this.jsonOutput && version.compareTo(new ComparableVersion("0.15.2")) > 0)
+            switch(command) {
+                case plan:
+                case apply:
+                case destroy:
+                    launcher.appendCommands("-json");
+                    break;
+            }
 
         launcher.setOutputListener(this.getOutputListener());
         launcher.setErrorListener(this.getErrorListener());
@@ -209,6 +220,7 @@ public class TerraformClient implements AutoCloseable {
                 launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
             }
 
+        ComparableVersion version = new ComparableVersion(terraformVersion);
         switch (command) {
             case init:
                 if (terraformBackendConfigFileName != null) {
@@ -227,9 +239,8 @@ public class TerraformClient implements AutoCloseable {
                 launcher.appendCommands("-auto-approve");
                 break;
             case destroy:
-                ComparableVersion version0_15_0 = new ComparableVersion("0.15.0"); //https://www.terraform.io/upgrade-guides/0-15.html#other-minor-command-line-behavior-changes
-                ComparableVersion version = new ComparableVersion(terraformVersion);
-                if (version.compareTo(version0_15_0) < 0)
+                //https://www.terraform.io/upgrade-guides/0-15.html#other-minor-command-line-behavior-changes
+                if (version.compareTo(new ComparableVersion("0.15.0")) < 0)
                     launcher.appendCommands("-force");
                 else
                     launcher.appendCommands("-auto-approve");
@@ -238,6 +249,16 @@ public class TerraformClient implements AutoCloseable {
 
         if (!this.showColor)
             launcher.appendCommands("-no-color");
+
+        //https://www.terraform.io/docs/internals/machine-readable-ui.html
+        if (this.jsonOutput && version.compareTo(new ComparableVersion("0.15.2")) > 0)
+        switch(command) {
+            case plan:
+            case apply:
+            case destroy:
+                launcher.appendCommands("-json");
+                break;
+        }
 
         launcher.setOutputListener(outputListener);
         launcher.setErrorListener(errorListener);

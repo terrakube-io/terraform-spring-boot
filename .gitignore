@@ -38,3 +38,4 @@ target/
 .terraform/
 
 Main.java
+.DS_Store
