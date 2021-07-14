@@ -16,7 +16,7 @@ Simply add the following dependency to your project's `pom.xml` will enable you 
 <dependency>
     <groupId>org.azbuilder.terraform</groupId>
     <artifactId>terraform-client</artifactId>
-    <version>0.3.0</version>
+    <version>0.4.0</version>
 </dependency>
 ```
 
@@ -81,7 +81,7 @@ Let's still use the terraform file `storage.tf` under `/some/local/path/` folder
 <dependency>
     <groupId>org.azbuilder.terraform</groupId>
     <artifactId>terraform-spring-boot-starter</artifactId>
-    <version>0.3.0</version>
+    <version>0.4.0</version>
 </dependency>
 ```
 
@@ -90,6 +90,14 @@ You can also enable or disable terraform output colors using the `application.pr
 ```
 org.azbuilder.terraform.flags.enableColor=true
 ```
+
+You can also enable or disable terraform output in json format using the `application.properties` or `application-${spring.profiles.active}.properties`:
+
+```
+org.azbuilder.terraform.flags.jsonOutput=true
+```
+
+> This feature is only supported in terraform >= 0.15.3
 
 The final step is to let the Spring framework wire up everything in your spring boot application:
 

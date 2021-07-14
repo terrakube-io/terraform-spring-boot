@@ -16,4 +16,5 @@ import org.springframework.stereotype.Component;
 public class TerraformProperties {
 
     private boolean enableColor;
+    private boolean jsonOutput;
 }

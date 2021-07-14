@@ -13,10 +13,9 @@ public class TerraformAutoConfiguration {
 
     @Bean
     public TerraformClient terraformClient(@NonNull TerraformProperties tfProperties) {
-        if (tfProperties.isEnableColor()) {
-            return TerraformClient.builder().showColor(true).build();
-        }else{
-            return TerraformClient.builder().showColor(false).build();
-        }
+            return TerraformClient.builder()
+                    .showColor(tfProperties.isEnableColor())
+                    .jsonOutput(tfProperties.isJsonOutput())
+                    .build();
     }
 }
