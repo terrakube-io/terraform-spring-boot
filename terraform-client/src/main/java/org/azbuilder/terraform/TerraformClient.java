@@ -184,8 +184,8 @@ public class TerraformClient implements AutoCloseable {
                 launcher.appendCommands("-auto-approve");
                 break;
             case destroy:
-                ComparableVersion version0_15_0 = new ComparableVersion("0.15.0"); //https://www.terraform.io/upgrade-guides/0-15.html#other-minor-command-line-behavior-changes
-                if (version.compareTo(version0_15_0) < 0)
+                //https://www.terraform.io/upgrade-guides/0-15.html#other-minor-command-line-behavior-changes
+                if (version.compareTo(new ComparableVersion("0.15.0")) < 0)
                     launcher.appendCommands("-force");
                 else
                     launcher.appendCommands("-auto-approve");
