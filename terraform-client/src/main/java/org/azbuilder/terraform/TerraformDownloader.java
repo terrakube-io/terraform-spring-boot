@@ -145,13 +145,10 @@ public class TerraformDownloader {
 
     private String unzipTerraformVersion(String terraformVersion, File terraformZipFile) throws IOException {
         createTerraformVersionDirectory(terraformVersion);
-        ZipInputStream zis = null;
-        ZipEntry zipEntry;
         String newFilePath = null;
-        FileOutputStream fos = null;
-        try {
-            zis = new ZipInputStream(new FileInputStream(terraformZipFile));
-            zipEntry = zis.getNextEntry();
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(terraformZipFile))) {
+            ZipEntry zipEntry = zis.getNextEntry();
+
             byte[] buffer = new byte[1024];
             while (zipEntry != null) {
                 newFilePath = this.userHomeDirectory.concat(
@@ -171,27 +168,21 @@ public class TerraformDownloader {
                         throw new IOException("Failed to create directory " + parent);
                     }
 
-                    fos = new FileOutputStream(newFile);
-                    int len;
-                    while ((len = zis.read(buffer)) > 0) {
-                        fos.write(buffer, 0, len);
+                    try (FileOutputStream fos = new FileOutputStream(newFile)) {
+                        int len;
+                        while ((len = zis.read(buffer)) > 0) {
+                            fos.write(buffer, 0, len);
+                        }
                     }
-                    fos.close();
 
                     if (SystemUtils.IS_OS_LINUX || SystemUtils.IS_OS_MAC) {
                         File updateAccess = new File(newFilePath);
-                        if (!updateAccess.setExecutable(true, true))
-                            throw new RuntimeException("Cannot set +x in" + newFile);
+                        updateAccess.setExecutable(true, true);
                     }
                 }
                 zipEntry = zis.getNextEntry();
             }
-        } catch (Exception ex) {
-            log.error(ex.getMessage());
-        } finally {
             zis.closeEntry();
-            zis.close();
-            fos.close();
         }
         return newFilePath;
     }
