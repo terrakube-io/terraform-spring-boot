@@ -87,7 +87,7 @@ public class TerraformDownloader {
             for (TerraformBuild terraformBuild : version.getBuilds()) {
                 if (terraformBuild.getArch().equals(SystemUtils.OS_ARCH) && (
                         SystemUtils.IS_OS_WINDOWS && terraformBuild.getOs().equals("windows") ||
-                        SystemUtils.IS_OS_LINUX && terraformBuild.getOs().equals("linux")) ||
+                                SystemUtils.IS_OS_LINUX && terraformBuild.getOs().equals("linux")) ||
                         SystemUtils.IS_OS_MAC && terraformBuild.getOs().equals("darwin")
                 ) {
                     String terraformZipReleaseURL = terraformBuild.getUrl();
@@ -145,47 +145,45 @@ public class TerraformDownloader {
 
     private String unzipTerraformVersion(String terraformVersion, File terraformZipFile) throws IOException {
         createTerraformVersionDirectory(terraformVersion);
-        ZipInputStream zis = new ZipInputStream(new FileInputStream(terraformZipFile));
-        ZipEntry zipEntry = zis.getNextEntry();
         String newFilePath = null;
-        byte[] buffer = new byte[1024];
-        while (zipEntry != null) {
-            newFilePath = this.userHomeDirectory.concat(
-                    FilenameUtils.separatorsToSystem(
-                            TERRAFORM_DIRECTORY.concat(terraformVersion.concat("/").concat(zipEntry.getName()))
-                    )
-            );
-            log.info("Unzip: {}", newFilePath);
-            File newFile = new File(newFilePath);
-            if (zipEntry.isDirectory()) {
-                if (!newFile.isDirectory() && !newFile.mkdirs()) {
-                    throw new IOException("Failed to create directory " + newFile);
-                }
-            } else {
-                File parent = newFile.getParentFile();
-                if (!parent.isDirectory() && !parent.mkdirs()) {
-                    throw new IOException("Failed to create directory " + parent);
-                }
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(terraformZipFile))) {
+            ZipEntry zipEntry = zis.getNextEntry();
 
-                // write file content
-                //newFile.setExecutable(true);
-                FileOutputStream fos = new FileOutputStream(newFile);
-                int len;
-                while ((len = zis.read(buffer)) > 0) {
-                    fos.write(buffer, 0, len);
-                }
-                fos.close();
+            byte[] buffer = new byte[1024];
+            while (zipEntry != null) {
+                newFilePath = this.userHomeDirectory.concat(
+                        FilenameUtils.separatorsToSystem(
+                                TERRAFORM_DIRECTORY.concat(terraformVersion.concat("/").concat(zipEntry.getName()))
+                        )
+                );
+                log.info("Unzip: {}", newFilePath);
+                File newFile = new File(newFilePath);
+                if (zipEntry.isDirectory()) {
+                    if (!newFile.isDirectory() && !newFile.mkdirs()) {
+                        throw new IOException("Failed to create directory " + newFile);
+                    }
+                } else {
+                    File parent = newFile.getParentFile();
+                    if (!parent.isDirectory() && !parent.mkdirs()) {
+                        throw new IOException("Failed to create directory " + parent);
+                    }
 
-                if(SystemUtils.IS_OS_LINUX || SystemUtils.IS_OS_MAC){
-                    File updateAccess = new File(newFilePath);
-                    updateAccess.setExecutable(true,true);
+                    try (FileOutputStream fos = new FileOutputStream(newFile)) {
+                        int len;
+                        while ((len = zis.read(buffer)) > 0) {
+                            fos.write(buffer, 0, len);
+                        }
+                    }
+
+                    if (SystemUtils.IS_OS_LINUX || SystemUtils.IS_OS_MAC) {
+                        File updateAccess = new File(newFilePath);
+                        updateAccess.setExecutable(true, true);
+                    }
                 }
+                zipEntry = zis.getNextEntry();
             }
-            zipEntry = zis.getNextEntry();
+            zis.closeEntry();
         }
-        zis.closeEntry();
-        zis.close();
-
         return newFilePath;
     }
 

@@ -17,21 +17,21 @@ public final class RawClientLibSampleApp {
         System.out.println(terraformDownloader.downloadTerraformVersion("0.15.0"));
         System.out.println(terraformDownloader.downloadTerraformVersion("0.14.9"));
 
-        TerraformClient terraformClient = new TerraformClient();
+        try (TerraformClient terraformClient = new TerraformClient()) {
+            terraformClient.setTerraformVersion("0.15.0");
+            System.out.println(terraformClient.version().get());
 
-        terraformClient.setTerraformVersion("0.15.0");
-        System.out.println(terraformClient.version().get());
-
-        terraformClient.setTerraformVersion("0.14.9");
-        System.out.println(terraformClient.version().get());
-        terraformClient.setTerraformVersion("0.14.7");
-        System.out.println(terraformClient.version().get());
+            terraformClient.setTerraformVersion("0.14.9");
+            System.out.println(terraformClient.version().get());
+            terraformClient.setTerraformVersion("0.14.7");
+            System.out.println(terraformClient.version().get());
+        }
 
         HashMap<String, String> environmentVariables = new HashMap<>();
-        environmentVariables.put("ARM_SUBSCRIPTION_ID","<Azure Subscription ID>");
-        environmentVariables.put("ARM_CLIENT_ID","<Azure Client ID>");
-        environmentVariables.put("ARM_CLIENT_SECRET","<Azure Client Secret>");
-        environmentVariables.put("ARM_TENANT_ID","<Azure Tenant ID>");
+        environmentVariables.put("ARM_SUBSCRIPTION_ID", "<Azure Subscription ID>");
+        environmentVariables.put("ARM_CLIENT_ID", "<Azure Client ID>");
+        environmentVariables.put("ARM_CLIENT_SECRET", "<Azure Client Secret>");
+        environmentVariables.put("ARM_TENANT_ID", "<Azure Tenant ID>");
 
         HashMap<String, String> terraformParameters = new HashMap<>();
 
