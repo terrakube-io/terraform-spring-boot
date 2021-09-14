@@ -17,6 +17,13 @@ import java.util.function.*;
 @Slf4j
 public class TerraformClient implements AutoCloseable {
 
+    private static final String TERRAFORM_PARAM_VARIABLE="--var";
+    private static final String TERRAFORM_PARAM_AUTO_APPROVED="-auto-approve";
+    private static final String TERRAFORM_PARAM_NO_COLOR="-no-color";
+    private static final String TERRAFORM_PARAM_FORCE="-force";
+    private static final String TERRAFORM_PARAM_JSON="-json";
+    private static final String TERRAFORM_PARAM_BACKEND="-backend-config=";
+
     private final ExecutorService executor = Executors.newWorkStealingPool();
     private final TerraformDownloader terraformDownloader = new TerraformDownloader();
 
@@ -167,32 +174,34 @@ public class TerraformClient implements AutoCloseable {
         switch (command) {
             case init:
                 if (this.backendConfig != null) {
-                    launcher.appendCommands("-backend-config=".concat(this.getBackendConfig()));
+                    launcher.appendCommands(TERRAFORM_PARAM_BACKEND.concat(this.getBackendConfig()));
                 }
                 break;
             case plan:
                 if (this.terraformParameters != null)
                     for (Map.Entry<String, String> entry : this.terraformParameters.entrySet()) {
-                        launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
+                        launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                     }
                 break;
             case apply:
                 if (this.terraformParameters != null)
                     for (Map.Entry<String, String> entry : this.getTerraformParameters().entrySet()) {
-                        launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
+                        launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                     }
-                launcher.appendCommands("-auto-approve");
+                launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
                 break;
             case destroy:
                 //https://www.terraform.io/upgrade-guides/0-15.html#other-minor-command-line-behavior-changes
                 if (version.compareTo(new ComparableVersion("0.15.0")) < 0)
-                    launcher.appendCommands("-force");
+                    launcher.appendCommands(TERRAFORM_PARAM_FORCE);
                 else
-                    launcher.appendCommands("-auto-approve");
+                    launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
+                break;
+            default:
                 break;
         }
         if (!this.showColor)
-            launcher.appendCommands("-no-color");
+            launcher.appendCommands(TERRAFORM_PARAM_NO_COLOR);
 
         //https://www.terraform.io/docs/internals/machine-readable-ui.html
         if (this.jsonOutput && version.compareTo(new ComparableVersion("0.15.2")) > 0)
@@ -200,7 +209,9 @@ public class TerraformClient implements AutoCloseable {
                 case plan:
                 case apply:
                 case destroy:
-                    launcher.appendCommands("-json");
+                    launcher.appendCommands(TERRAFORM_PARAM_JSON);
+                    break;
+                default:
                     break;
             }
 
@@ -224,41 +235,45 @@ public class TerraformClient implements AutoCloseable {
         switch (command) {
             case init:
                 if (terraformBackendConfigFileName != null) {
-                    launcher.appendCommands("-backend-config=".concat(terraformBackendConfigFileName));
+                    launcher.appendCommands(TERRAFORM_PARAM_BACKEND.concat(terraformBackendConfigFileName));
                 }
                 break;
             case plan:
                 for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
-                    launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
+                    launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                 }
                 break;
             case apply:
                 for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
-                    launcher.appendCommands("--var", entry.getKey().concat("=").concat(entry.getValue()));
+                    launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                 }
-                launcher.appendCommands("-auto-approve");
+                launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
                 break;
             case destroy:
                 //https://www.terraform.io/upgrade-guides/0-15.html#other-minor-command-line-behavior-changes
                 if (version.compareTo(new ComparableVersion("0.15.0")) < 0)
-                    launcher.appendCommands("-force");
+                    launcher.appendCommands(TERRAFORM_PARAM_FORCE);
                 else
-                    launcher.appendCommands("-auto-approve");
+                    launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
+                break;
+            default:
                 break;
         }
 
         if (!this.showColor)
-            launcher.appendCommands("-no-color");
+            launcher.appendCommands(TERRAFORM_PARAM_NO_COLOR);
 
         //https://www.terraform.io/docs/internals/machine-readable-ui.html
         if (this.jsonOutput && version.compareTo(new ComparableVersion("0.15.2")) > 0)
-        switch(command) {
-            case plan:
-            case apply:
-            case destroy:
-                launcher.appendCommands("-json");
-                break;
-        }
+            switch(command) {
+                case plan:
+                case apply:
+                case destroy:
+                    launcher.appendCommands(TERRAFORM_PARAM_JSON);
+                    break;
+                default:
+                    break;
+            }
 
         launcher.setOutputListener(outputListener);
         launcher.setErrorListener(errorListener);

@@ -82,6 +82,7 @@ final class ProcessLauncher {
             try {
                 return this.process.waitFor();
             } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
                 throw new RuntimeException(ex);
             }
         }, this.executor);

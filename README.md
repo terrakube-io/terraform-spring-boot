@@ -1,4 +1,7 @@
 # Terraform Spring Boot
+[![Reliability Rating](https://sonarcloud.io/api/project_badges/measure?project=AzBuilder_terraform-spring-boot&metric=reliability_rating)](https://sonarcloud.io/dashboard?id=AzBuilder_terraform-spring-boot)
+[![Security Rating](https://sonarcloud.io/api/project_badges/measure?project=AzBuilder_terraform-spring-boot&metric=security_rating)](https://sonarcloud.io/dashboard?id=AzBuilder_terraform-spring-boot)
+[![Maintainability Rating](https://sonarcloud.io/api/project_badges/measure?project=AzBuilder_terraform-spring-boot&metric=sqale_rating)](https://sonarcloud.io/dashboard?id=AzBuilder_terraform-spring-boot)
 
 ## Introduction
 
