@@ -9,7 +9,8 @@ import java.util.stream.*;
 final class ProcessLauncher {
     private Process process;
     private ProcessBuilder builder;
-    private Consumer<String> outputListener, errorListener;
+    private Consumer<String> outputListener;
+    private Consumer<String> errorListener;
     private boolean inheritIO;
     private ExecutorService executor;
 
@@ -48,7 +49,10 @@ final class ProcessLauncher {
     void setEnvironmentVariable(String name, String value) {
         assert name != null && name.length() > 0;
         Map<String, String> env = this.builder.environment();
-        value = (value != null ? env.put(name, value) : env.remove(name));
+        if(value != null)
+            env.put(name, value);
+        else
+            env.remove(name);
     }
 
     void setOrAppendEnvironmentVariable(String name, String value, String delimiter) {
@@ -60,7 +64,7 @@ final class ProcessLauncher {
         }
     }
 
-    CompletableFuture<Integer> launch() {
+    CompletableFuture<Integer> launch() throws Exception {
         assert this.process == null;
         if (this.inheritIO) {
             this.builder.inheritIO();
@@ -68,7 +72,7 @@ final class ProcessLauncher {
         try {
             this.process = this.builder.start();
         } catch (IOException ex) {
-            throw new RuntimeException(ex);
+            throw new TerraformException(ex.getMessage());
         }
         if (!this.inheritIO) {
             if (this.outputListener != null) {

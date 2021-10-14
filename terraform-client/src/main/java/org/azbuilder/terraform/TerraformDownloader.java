@@ -177,7 +177,10 @@ public class TerraformDownloader {
 
                     if (SystemUtils.IS_OS_LINUX || SystemUtils.IS_OS_MAC) {
                         File updateAccess = new File(newFilePath);
-                        updateAccess.setExecutable(true, true);
+                        boolean executable = updateAccess.setExecutable(true, true);
+                        log.info("Executable {}", executable);
+                        if (!executable)
+                            throw new RuntimeException("Enable +x failed in ".concat(newFilePath));
                     }
                 }
                 zipEntry = zis.getNextEntry();
