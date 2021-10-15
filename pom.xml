@@ -6,7 +6,7 @@
   <version>${revision}</version>
   <packaging>pom</packaging>
 
-  <name>Terraform Spring Boot solution</name>
+  <name>Terraform Spring Boot Starter</name>
   <url>https://github.com/AzBuilder/terraform-spring-boot</url>
 
   <properties>
