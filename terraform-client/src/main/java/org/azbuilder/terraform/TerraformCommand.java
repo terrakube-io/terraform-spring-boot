@@ -5,5 +5,6 @@ public enum TerraformCommand {
     plan,
     apply,
     destroy,
-    version
+    version,
+    show
 }

@@ -23,6 +23,8 @@ public class TerraformClient implements AutoCloseable {
     private static final String TERRAFORM_PARAM_FORCE = "-force";
     private static final String TERRAFORM_PARAM_JSON = "-json";
     private static final String TERRAFORM_PARAM_BACKEND = "-backend-config=";
+    private static final String TERRAFORM_PARAM_OUTPUT_PLAN = "-out=terraformLibrary.tfPlan";
+    private static final String TERRAFORM_PARAM_OUTPUT_PLAN_FILE = "terraformLibrary.tfPlan";
 
     private final ExecutorService executor = Executors.newWorkStealingPool();
     private final TerraformDownloader terraformDownloader = new TerraformDownloader();
@@ -52,6 +54,23 @@ public class TerraformClient implements AutoCloseable {
             }
         });
         return launcher.launch().thenApply((c) -> c == 0 ? version.toString() : null);
+    }
+
+    public CompletableFuture<Boolean> show(@NonNull String terraformVersion, @NonNull File workingDirectory, String terraformBackendConfigFileName, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+        return this.run(
+                terraformVersion,
+                workingDirectory,
+                terraformBackendConfigFileName,
+                new HashMap(),
+                new HashMap(),
+                outputListener,
+                errorListener,
+                TerraformCommand.init, TerraformCommand.show);
+    }
+
+    public CompletableFuture<Boolean> show() throws IOException {
+        this.checkRunningParameters();
+        return this.run(TerraformCommand.init, TerraformCommand.show);
     }
 
     public CompletableFuture<Boolean> plan(@NonNull String terraformVersion, @NonNull File workingDirectory, String terraformBackendConfigFileName, @NonNull Map<String, String> terraformVariables, @NonNull Map<String, String> terraformEnvironmentVariables, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
@@ -119,6 +138,10 @@ public class TerraformClient implements AutoCloseable {
                     errorListener, commands[i]);
         }
 
+        return getLauncherResult(launchers, commands);
+    }
+
+    private CompletableFuture<Boolean> getLauncherResult(ProcessLauncher[] launchers, TerraformCommand[] commands) {
         CompletableFuture<Integer> result = launchers[0].launch().thenApply(c -> c == 0 ? 1 : -1);
         for (int i = 1; i < commands.length; i++) {
             result = result.thenCompose(index -> {
@@ -139,16 +162,7 @@ public class TerraformClient implements AutoCloseable {
             launchers[i] = this.getTerraformLauncher(commands[i]);
         }
 
-        CompletableFuture<Integer> result = launchers[0].launch().thenApply(c -> c == 0 ? 1 : -1);
-        for (int i = 1; i < commands.length; i++) {
-            result = result.thenCompose(index -> {
-                if (index > 0) {
-                    return launchers[index].launch().thenApply(c -> c == 0 ? index + 1 : -1);
-                }
-                return CompletableFuture.completedFuture(-1);
-            });
-        }
-        return result.thenApply(i -> i > 0);
+        return getLauncherResult(launchers, commands);
     }
 
     private void checkRunningParameters() {
@@ -186,12 +200,19 @@ public class TerraformClient implements AutoCloseable {
                 for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
                     launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                 }
+                launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN);
                 break;
             case apply:
-                for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
-                    launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
+                if(terraformVariables.entrySet().isEmpty()) {
+                    launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
+                    launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
                 }
-                launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
+                else {
+                    for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
+                        launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
+                    }
+                    launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
+                }
                 break;
             case destroy:
                 //https://www.terraform.io/upgrade-guides/0-15.html#other-minor-command-line-behavior-changes
