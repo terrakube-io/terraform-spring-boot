@@ -37,6 +37,8 @@ public final class RawClientLibSampleApp {
 
         try (TerraformClient client = TerraformClient.builder().terraformParameters(terraformParameters).environmentVariables(environmentVariables).build()) {
 
+            client.init();
+
             System.out.println(client.version().get());
             client.setOutputListener(System.out::println);
             client.setErrorListener(System.err::println);
