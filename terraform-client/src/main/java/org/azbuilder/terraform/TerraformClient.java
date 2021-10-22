@@ -158,6 +158,23 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.destroy);
     }
 
+    public CompletableFuture<Boolean> output(@NonNull String terraformVersion, @NonNull File workingDirectory, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+        return this.run(
+                terraformVersion,
+                workingDirectory,
+                null,
+                new HashMap<>(),
+                new HashMap<>(),
+                outputListener,
+                errorListener,
+                TerraformCommand.output);
+    }
+
+    public CompletableFuture<Boolean> output() throws IOException {
+        this.checkRunningParameters();
+        return this.run(TerraformCommand.output);
+    }
+
     private CompletableFuture<Boolean> run(String terraformVersion, File workingDirectory, String terraformBackendConfigFileName, Map<String, String> terraformVariables, Map<String, String> terraformEnvironmentVariables, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand... commands) throws IOException {
         assert commands.length > 0;
         ProcessLauncher[] launchers = new ProcessLauncher[commands.length];
@@ -253,6 +270,10 @@ public class TerraformClient implements AutoCloseable {
                     launcher.appendCommands(TERRAFORM_PARAM_FORCE);
                 else
                     launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
+                break;
+            case show:
+            case output:
+                launcher.appendCommands(TERRAFORM_PARAM_JSON);
                 break;
             case showPlan:
                 launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
