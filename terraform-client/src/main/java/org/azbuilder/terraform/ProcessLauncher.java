@@ -6,7 +6,7 @@ import java.util.concurrent.*;
 import java.util.function.*;
 import java.util.stream.*;
 
-final class ProcessLauncher {
+public final class ProcessLauncher {
     private Process process;
     private ProcessBuilder builder;
     private Consumer<String> outputListener, errorListener;

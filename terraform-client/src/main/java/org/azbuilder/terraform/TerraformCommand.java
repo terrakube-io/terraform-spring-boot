@@ -10,7 +10,8 @@ public enum TerraformCommand {
     destroy("destroy"),
     version("version"),
     show("show"),
-    showPlan("show");
+    showPlan("show"),
+    output("output");
 
     private String label;
 
