@@ -25,6 +25,7 @@ public class TerraformClient implements AutoCloseable {
     private static final String TERRAFORM_PARAM_BACKEND = "-backend-config=";
     private static final String TERRAFORM_PARAM_OUTPUT_PLAN = "-out=terraformLibrary.tfPlan";
     private static final String TERRAFORM_PARAM_OUTPUT_PLAN_FILE = "terraformLibrary.tfPlan";
+    private static final String TERRAFORM_PARAM_DISABLE_USER_INPUT = "-input=false";
 
     private final ExecutorService executor = Executors.newWorkStealingPool();
     private final TerraformDownloader terraformDownloader = new TerraformDownloader();
@@ -141,12 +142,12 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.apply);
     }
 
-    public CompletableFuture<Boolean> destroy(@NonNull String terraformVersion, @NonNull File workingDirectory, String terraformBackendConfigFileName, @NonNull Map<String, String> terraformEnvironmentVariables, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> destroy(@NonNull String terraformVersion, @NonNull File workingDirectory, String terraformBackendConfigFileName, @NonNull Map<String, String> terraformVariables, @NonNull Map<String, String> terraformEnvironmentVariables, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformVersion,
                 workingDirectory,
                 terraformBackendConfigFileName,
-                new HashMap<>(),
+                terraformVariables,
                 terraformEnvironmentVariables,
                 outputListener,
                 errorListener,
@@ -246,23 +247,29 @@ public class TerraformClient implements AutoCloseable {
                 if (terraformBackendConfigFileName != null) {
                     launcher.appendCommands(TERRAFORM_PARAM_BACKEND.concat(terraformBackendConfigFileName));
                 }
+                launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
                 break;
             case plan:
                 for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
                     launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                 }
                 launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN);
+                launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
+
                 break;
             case apply:
                 if (terraformVariables.entrySet().isEmpty()) {
                     launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
+                    launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
                     launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
                 } else {
                     for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
                         launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                     }
                     launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
+                    launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
                 }
+
                 break;
             case destroy:
                 //https://www.terraform.io/upgrade-guides/0-15.html#other-minor-command-line-behavior-changes
@@ -270,6 +277,12 @@ public class TerraformClient implements AutoCloseable {
                     launcher.appendCommands(TERRAFORM_PARAM_FORCE);
                 else
                     launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
+
+                for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
+                    launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
+                }
+
+                launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
                 break;
             case show:
             case output:
