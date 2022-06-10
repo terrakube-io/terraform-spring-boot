@@ -20,6 +20,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.deploy.skip>true</maven.deploy.skip>
+        <revision>0.6.3</revision>
     </properties>
 
     <licenses>
@@ -52,7 +53,7 @@
         <dependency>
             <groupId>org.terrakube.terraform</groupId>
             <artifactId>terraform-client</artifactId>
-            <version>0.7.0</version>
+            <version>${revision}</version>
         </dependency>
     </dependencies>
 </project>
