@@ -3,14 +3,14 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.azbuilder.terraform.samples</groupId>
-        <artifactId>terraform-spring-boot-samples-solution</artifactId>
+        <groupId>org.terrakube.terraform</groupId>
+        <artifactId>terraform-samples</artifactId>
         <version>${revision}</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <groupId>org.azbuilder.terraform.samples</groupId>
-    <artifactId>terraform-raw-client-lib</artifactId>
+    <groupId>org.terrakube.terraform</groupId>
+    <artifactId>terraform-raw-client-lib-sample</artifactId>
     <version>${revision}</version>
     <packaging>jar</packaging>
 
@@ -50,9 +50,9 @@
 
     <dependencies>
         <dependency>
-            <groupId>org.azbuilder.terraform</groupId>
+            <groupId>org.terrakube.terraform</groupId>
             <artifactId>terraform-client</artifactId>
-            <version>${revision}</version>
+            <version>0.7.0</version>
         </dependency>
     </dependencies>
 </project>

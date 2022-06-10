@@ -1,4 +1,4 @@
-package org.azbuilder.terraform;
+package org.terrakube.terraform;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;

@@ -1,17 +1,17 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>org.azbuilder</groupId>
-  <artifactId>terraform</artifactId>
+  <groupId>org.terrakube.terraform</groupId>
+  <artifactId>terraform-solution</artifactId>
   <version>${revision}</version>
   <packaging>pom</packaging>
 
-  <name>Terraform Spring Boot Starter</name>
+  <name>Terraform Spring Boot Starter for Terrakube</name>
   <url>https://github.com/AzBuilder/terraform-spring-boot</url>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <revision>0.6.1</revision>
+    <revision>0.7.0</revision>
     <sonar.organization>azbuilder</sonar.organization>
     <sonar.host.url>https://sonarcloud.io</sonar.host.url>
     <maven.deploy.skip>true</maven.deploy.skip>
@@ -20,14 +20,14 @@
   <licenses>
     <license>
       <name>MIT</name>
-      <url>https://github.com/Microsoft/terraform-spring-boot/blob/master/LICENSE</url>
+      <url>https://github.com/AzBuilder/terraform-spring-boot/blob/master/LICENSE</url>
       <distribution>repo</distribution>
     </license>
   </licenses>
 
   <organization>
-    <name>Microsoft</name>
-    <url>https://www.microsoft.com</url>
+    <name>Terrakube</name>
+    <url>https://terrakube.org/</url>
   </organization>
 
   <developers>

@@ -11,15 +11,23 @@ This repository is for Spring Boot Starters of Terraform client.
 
 There are two ways you could use this library. One way is to directly use the `TerraformClient.builder` class which wraps `terraform` and download any require terraform version to you local machine; and the other way is to integrate it into a Spring boot application using annotations.
 
+### Build library
+
+To build the library locally use the following command.
+
+```
+mvn install -Dgpg.skip
+```
+
 ### Client library
 
 Simply add the following dependency to your project's `pom.xml` will enable you to use the `TerraformClient` class.
 
 ```xml
 <dependency>
-    <groupId>org.azbuilder.terraform</groupId>
+    <groupId>org.terrakube.terraform</groupId>
     <artifactId>terraform-client</artifactId>
-    <version>0.4.0</version>
+    <version>0.7.0</version>
 </dependency>
 ```
 
@@ -82,22 +90,22 @@ Let's still use the terraform file `storage.tf` under `/some/local/path/` folder
 
 ```xml
 <dependency>
-    <groupId>org.azbuilder.terraform</groupId>
+    <groupId>org.terrakube.terraform</groupId>
     <artifactId>terraform-spring-boot-starter</artifactId>
-    <version>0.4.0</version>
+    <version>0.7.0</version>
 </dependency>
 ```
 
 You can also enable or disable terraform output colors using the `application.properties` or `application-${spring.profiles.active}.properties`:
 
 ```
-org.azbuilder.terraform.flags.enableColor=true
+org.terrakube.terraform.flags.enableColor=true
 ```
 
 You can also enable or disable terraform output in json format using the `application.properties` or `application-${spring.profiles.active}.properties`:
 
 ```
-org.azbuilder.terraform.flags.jsonOutput=true
+org.terrakube.terraform.flags.jsonOutput=true
 ```
 
 > This feature is only supported in terraform >= 0.15.3
