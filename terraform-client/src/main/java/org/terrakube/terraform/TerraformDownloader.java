@@ -1,4 +1,4 @@
-package org.azbuilder.terraform;
+package org.terrakube.terraform;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
@@ -177,7 +177,10 @@ public class TerraformDownloader {
 
                     if (SystemUtils.IS_OS_LINUX || SystemUtils.IS_OS_MAC) {
                         File updateAccess = new File(newFilePath);
-                        updateAccess.setExecutable(true, true);
+                        if(updateAccess.setExecutable(true, true))
+                            log.info("Terraform setExecutable successful");
+                        else
+                            log.error("Terraform setExecutable successful");
                     }
                 }
                 zipEntry = zis.getNextEntry();

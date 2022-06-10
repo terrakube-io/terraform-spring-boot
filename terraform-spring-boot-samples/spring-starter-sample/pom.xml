@@ -3,19 +3,19 @@
     <modelVersion>4.0.0</modelVersion>
 
     <parent>
-        <groupId>org.azbuilder.terraform.samples</groupId>
-        <artifactId>terraform-spring-boot-samples-solution</artifactId>
+        <groupId>org.terrakube.terraform</groupId>
+        <artifactId>terraform-samples</artifactId>
         <version>${revision}</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
 
-    <groupId>org.azbuilder.terraform.samples</groupId>
-    <artifactId>terraform-spring-starter</artifactId>
+    <groupId>org.terrakube.terraform</groupId>
+    <artifactId>terraform-spring-starter-sample</artifactId>
     <version>${revision}</version>
     <packaging>jar</packaging>
 
     <name>Terraform Spring Boot Starter Sample App</name>
-    <url>https://github.com/Microsoft/terraform-spring-boot</url>
+    <url>https://github.com/AzBuilder/terraform-spring-boot</url>
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -48,11 +48,17 @@
         </developer>
     </developers>
 
+    <scm>
+        <connection>scm:git:git://github.com/AzBuilder/terraform-spring-boot.git</connection>
+        <developerConnection>scm:git:ssh://github.com/AzBuilder/terraform-spring-boot.git</developerConnection>
+        <url>http://github.com/AzBuilder/terraform-spring-boot/tree/master</url>
+    </scm>
+
     <dependencies>
         <dependency>
-            <groupId>org.azbuilder.terraform</groupId>
+            <groupId>org.terrakube.terraform</groupId>
             <artifactId>terraform-spring-boot-starter</artifactId>
-            <version>${revision}</version>
+            <version>0.7.0</version>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>

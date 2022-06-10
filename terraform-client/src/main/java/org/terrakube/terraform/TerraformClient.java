@@ -1,4 +1,4 @@
-package org.azbuilder.terraform;
+package org.terrakube.terraform;
 
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;

@@ -1,10 +1,10 @@
-package org.azbuilder.terraform.spring.autoconfigure;
+package org.terrakube.terraform.spring.autoconfigure;
 
 import lombok.NonNull;
-import org.azbuilder.terraform.TerraformClient;
 import org.springframework.boot.autoconfigure.condition.*;
 import org.springframework.boot.context.properties.*;
 import org.springframework.context.annotation.*;
+import org.terrakube.terraform.TerraformClient;
 
 @Configuration
 @EnableConfigurationProperties(TerraformProperties.class)
