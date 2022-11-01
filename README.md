@@ -27,7 +27,7 @@ Simply add the following dependency to your project's `pom.xml` will enable you 
 <dependency>
     <groupId>org.terrakube.terraform</groupId>
     <artifactId>terraform-client</artifactId>
-    <version>0.7.0</version>
+    <version>0.6.5</version>
 </dependency>
 ```
 
