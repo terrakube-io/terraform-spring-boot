@@ -4,17 +4,19 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
 import lombok.Setter;
 import lombok.extern.slf4j.Slf4j;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
-import okhttp3.ResponseBody;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.SystemUtils;
 
 import java.io.*;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -23,17 +25,17 @@ public class TerraformDownloader {
 
     private static final String TERRAFORM_DOWNLOAD_DIRECTORY = "/.terraform-spring-boot/download/";
     private static final String TERRAFORM_DIRECTORY = "/.terraform-spring-boot/terraform/";
+
+    private static final String TEMP_DIRECTORY = "/.terraform-spring-boot/";
     private static final String TERRAFORM_RELEASES_URL = "https://releases.hashicorp.com/terraform/index.json";
 
     private TerraformResponse terraformReleases;
     private File terraformDownloadDirectory;
     private File terraformDirectory;
     private String userHomeDirectory;
-    private OkHttpClient httpClient;
 
     public TerraformDownloader() {
         log.info("Initialize TerraformDownloader");
-        this.httpClient = new OkHttpClient();
 
         try {
             createDownloadTempDirectory();
@@ -66,15 +68,37 @@ public class TerraformDownloader {
 
     private void getTerraformReleases() throws IOException {
         log.info("Downloading terraform releases list");
-        Request request = new Request.Builder()
-                .url(TERRAFORM_RELEASES_URL)
-                .build();
 
-        //ResponseBody response = client.newCall(request).execute().body();
         ObjectMapper objectMapper = new ObjectMapper();
-        ResponseBody responseBody = httpClient.newCall(request).execute().body();
-        this.terraformReleases = objectMapper.readValue(responseBody.string(), TerraformResponse.class);
 
+        String tempPath = userHomeDirectory.concat(
+                FilenameUtils.separatorsToSystem(
+                        TEMP_DIRECTORY
+                ));
+
+        File tempFile;
+
+        if(SystemUtils.IS_OS_UNIX) {
+            FileAttribute<Set<PosixFilePermission>> attr = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"));
+            tempFile = File.createTempFile("terraform-", "-release", new File(tempPath));  // Compliant
+        }
+        else {
+            tempFile = File.createTempFile("terraform-", "-release", new File(tempPath));   // Compliant
+            if(tempFile.setReadable(true, true)){
+                log.info("File permission Readable applied");
+            }
+            if(tempFile.setWritable(true, true)){
+                log.info("File permission Writable applied");
+            }
+            if(tempFile.setExecutable(true, true)){
+                log.info("File permission Executable applied");
+            }
+        }
+
+
+        FileUtils.copyURLToFile(new URL(TERRAFORM_RELEASES_URL), tempFile);
+        this.terraformReleases = objectMapper.readValue(tempFile, TerraformResponse.class);
+        log.info("Deleting Temp {}",tempFile.getAbsolutePath());
         log.info("Found {} terraform releases", this.terraformReleases.getVersions().size());
     }
 
@@ -99,25 +123,18 @@ public class TerraformDownloader {
                                             TERRAFORM_DOWNLOAD_DIRECTORY.concat("/").concat(fileName)
                                     ))))) {
 
-                        Request request = new Request.Builder()
-                                .url(terraformZipReleaseURL)
-                                .build();
-
                         log.info("Downloading: {}", terraformZipReleaseURL);
-                        Response responseTerraformFile = httpClient.newCall(request).execute();
-                        if (responseTerraformFile.isSuccessful()) {
-                            InputStream initialStream = responseTerraformFile.body().byteStream();
-
+                        try {
                             File terraformZipFile = new File(
                                     this.userHomeDirectory.concat(
                                             FilenameUtils.separatorsToSystem(
                                                     TERRAFORM_DOWNLOAD_DIRECTORY.concat(fileName)
                                             )));
 
-                            FileUtils.copyInputStreamToFile(initialStream, terraformZipFile);
+                            FileUtils.copyURLToFile(new URL(terraformZipReleaseURL), terraformZipFile);
 
                             terraformFilePath = unzipTerraformVersion(terraformVersion, terraformZipFile);
-                        } else {
+                        } catch (IOException exception) {
                             throw new IOException("Unable to download ".concat(terraformZipReleaseURL));
                         }
                     } else {

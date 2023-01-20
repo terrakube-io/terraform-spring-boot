@@ -24,6 +24,8 @@ public class TerraformClient implements AutoCloseable {
     private static final String TERRAFORM_PARAM_JSON = "-json";
     private static final String TERRAFORM_PARAM_BACKEND = "-backend-config=";
     private static final String TERRAFORM_PARAM_OUTPUT_PLAN = "-out=terraformLibrary.tfPlan";
+
+    private static final String TERRAFORM_PARAM_PLAN_DESTROY = "-destroy";
     private static final String TERRAFORM_PARAM_OUTPUT_PLAN_FILE = "terraformLibrary.tfPlan";
     private static final String TERRAFORM_PARAM_DISABLE_USER_INPUT = "-input=false";
 
@@ -118,6 +120,18 @@ public class TerraformClient implements AutoCloseable {
                 outputListener,
                 errorListener,
                 TerraformCommand.plan);
+    }
+
+    public CompletableFuture<Boolean> planDestroy(@NonNull String terraformVersion, @NonNull File workingDirectory, String terraformBackendConfigFileName, @NonNull Map<String, String> terraformVariables, @NonNull Map<String, String> terraformEnvironmentVariables, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+        return this.run(
+                terraformVersion,
+                workingDirectory,
+                terraformBackendConfigFileName,
+                terraformVariables,
+                terraformEnvironmentVariables,
+                outputListener,
+                errorListener,
+                TerraformCommand.planDestroy);
     }
 
     public CompletableFuture<Boolean> plan() throws IOException {
@@ -249,6 +263,7 @@ public class TerraformClient implements AutoCloseable {
                 }
                 launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
                 break;
+            case planDestroy:
             case plan:
                 for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
                     launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
@@ -256,6 +271,9 @@ public class TerraformClient implements AutoCloseable {
                 launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN);
                 launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
 
+                if(command.equals(TerraformCommand.planDestroy)){
+                    launcher.appendCommands(TERRAFORM_PARAM_PLAN_DESTROY);
+                }
                 break;
             case apply:
                 if (terraformVariables.entrySet().isEmpty()) {
