@@ -84,9 +84,15 @@ public class TerraformDownloader {
         }
         else {
             tempFile = File.createTempFile("terraform-", "-release", new File(tempPath));   // Compliant
-            tempFile.setReadable(true, true);
-            tempFile.setWritable(true, true);
-            tempFile.setExecutable(true, true);
+            if(tempFile.setReadable(true, true)){
+                log.info("File permission Readable applied");
+            }
+            if(tempFile.setWritable(true, true)){
+                log.info("File permission Writable applied");
+            }
+            if(tempFile.setExecutable(true, true)){
+                log.info("File permission Executable applied");
+            }
         }
 
 
