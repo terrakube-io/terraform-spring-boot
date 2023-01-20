@@ -11,8 +11,12 @@ import org.apache.commons.lang3.SystemUtils;
 import java.io.*;
 import java.net.URL;
 import java.nio.file.Files;
+import java.nio.file.attribute.FileAttribute;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -21,6 +25,8 @@ public class TerraformDownloader {
 
     private static final String TERRAFORM_DOWNLOAD_DIRECTORY = "/.terraform-spring-boot/download/";
     private static final String TERRAFORM_DIRECTORY = "/.terraform-spring-boot/terraform/";
+
+    private static final String TEMP_DIRECTORY = "/.terraform-spring-boot/";
     private static final String TERRAFORM_RELEASES_URL = "https://releases.hashicorp.com/terraform/index.json";
 
     private TerraformResponse terraformReleases;
@@ -65,11 +71,28 @@ public class TerraformDownloader {
 
         ObjectMapper objectMapper = new ObjectMapper();
 
-        File tempFile = Files.createTempFile("terraform-", "-release").toFile();
+        String tempPath = userHomeDirectory.concat(
+                FilenameUtils.separatorsToSystem(
+                        TEMP_DIRECTORY
+                ));
+
+        File tempFile;
+
+        if(SystemUtils.IS_OS_UNIX) {
+            FileAttribute<Set<PosixFilePermission>> attr = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"));
+            tempFile = File.createTempFile("terraform-", "-release", new File(tempPath));  // Compliant
+        }
+        else {
+            tempFile = File.createTempFile("terraform-", "-release", new File(tempPath));   // Compliant
+            tempFile.setReadable(true, true);
+            tempFile.setWritable(true, true);
+            tempFile.setExecutable(true, true);
+        }
+
+
         FileUtils.copyURLToFile(new URL(TERRAFORM_RELEASES_URL), tempFile);
         this.terraformReleases = objectMapper.readValue(tempFile, TerraformResponse.class);
         log.info("Deleting Temp {}",tempFile.getAbsolutePath());
-        tempFile.delete();
         log.info("Found {} terraform releases", this.terraformReleases.getVersions().size());
     }
 
