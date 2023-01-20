@@ -6,6 +6,7 @@ import lombok.Getter;
 public enum TerraformCommand {
     init("init"),
     plan("plan"),
+    planDestroy("plan"),
     apply("apply"),
     destroy("destroy"),
     version("version"),
