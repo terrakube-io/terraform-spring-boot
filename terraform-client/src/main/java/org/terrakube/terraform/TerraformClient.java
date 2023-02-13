@@ -256,6 +256,22 @@ public class TerraformClient implements AutoCloseable {
             }
 
         ComparableVersion version = new ComparableVersion(terraformVersion);
+
+        if (!this.showColor)
+            launcher.appendCommands(TERRAFORM_PARAM_NO_COLOR);
+
+        //https://www.terraform.io/docs/internals/machine-readable-ui.html
+        if (this.jsonOutput && version.compareTo(new ComparableVersion("0.15.2")) > 0)
+            switch (command) {
+                case plan:
+                case apply:
+                case destroy:
+                    launcher.appendCommands(TERRAFORM_PARAM_JSON);
+                    break;
+                default:
+                    break;
+            }
+
         switch (command) {
             case init:
                 if (terraformBackendConfigFileName != null) {
@@ -312,21 +328,6 @@ public class TerraformClient implements AutoCloseable {
             default:
                 break;
         }
-
-        if (!this.showColor)
-            launcher.appendCommands(TERRAFORM_PARAM_NO_COLOR);
-
-        //https://www.terraform.io/docs/internals/machine-readable-ui.html
-        if (this.jsonOutput && version.compareTo(new ComparableVersion("0.15.2")) > 0)
-            switch (command) {
-                case plan:
-                case apply:
-                case destroy:
-                    launcher.appendCommands(TERRAFORM_PARAM_JSON);
-                    break;
-                default:
-                    break;
-            }
 
         launcher.setOutputListener(outputListener);
         launcher.setErrorListener(errorListener);

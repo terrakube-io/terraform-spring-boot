@@ -22,7 +22,7 @@
     <maven-source-plugin.version>3.2.1</maven-source-plugin.version>
     <maven-javadoc-plugin.version>3.4.0</maven-javadoc-plugin.version>
     <maven-gpg-plugin.version>3.0.1</maven-gpg-plugin.version>
-    <revision>0.7.0</revision>
+    <revision>0.7.1</revision>
     <maven.deploy.skip>false</maven.deploy.skip>
     <lombok.version>1.18.20</lombok.version>
   </properties>
