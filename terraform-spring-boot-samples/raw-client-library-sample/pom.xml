@@ -20,7 +20,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.deploy.skip>true</maven.deploy.skip>
-        <revision>0.7.0</revision>
+        <revision>0.7.1</revision>
     </properties>
 
     <licenses>
