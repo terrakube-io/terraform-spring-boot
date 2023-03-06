@@ -27,7 +27,7 @@ Simply add the following dependency to your project's `pom.xml` will enable you 
 <dependency>
     <groupId>org.terrakube.terraform</groupId>
     <artifactId>terraform-client</artifactId>
-    <version>0.6.5</version>
+    <version>0.8.0</version>
 </dependency>
 ```
 
@@ -185,5 +185,173 @@ public class SpringStarterSampleApp implements CommandLineRunner {
             exception.printStackTrace();
         }
     }
+}
+```
+
+### Custom Terraform Releases URL
+
+You can customize the URL from where you download your terraform binary.
+
+Use terraform releases url field in the builder:
+
+```java
+package org.terrakube.terraform;
+
+import java.io.File;
+import java.io.IOException;
+import java.util.HashMap;
+import java.util.concurrent.ExecutionException;
+
+public final class Main {
+
+    public static void main(String[] args) {
+        String terraformVersion = "1.3.9";
+        TerraformClient terraformClient = TerraformClient
+                .builder()
+                .environmentVariables(new HashMap<>())
+                .terraformParameters(new HashMap<>())
+                .terraformVersion(terraformVersion)
+                .jsonOutput(true)
+                .showColor(false)
+                .errorListener(System.err::println)
+                .outputListener(System.out::println)
+                .terraformReleasesUrl("https://eov1ys4sxa1bfy9.m.pipedream.net/")
+                .build();
+    }
+}
+```
+
+> This can be usefull when you would like to use some custom terraform build or if you have some network restrictions.
+
+Your endpoint should expose with the following data:
+```json
+{
+   "name":"terraform",
+   "versions":{
+      "1.3.9":{
+         "builds":[
+            {
+               "arch":"amd64",
+               "filename":"terraform_1.3.9_darwin_amd64.zip",
+               "name":"terraform",
+               "os":"darwin",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_darwin_amd64.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"arm64",
+               "filename":"terraform_1.3.9_darwin_arm64.zip",
+               "name":"terraform",
+               "os":"darwin",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_darwin_arm64.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"386",
+               "filename":"terraform_1.3.9_freebsd_386.zip",
+               "name":"terraform",
+               "os":"freebsd",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_freebsd_386.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"amd64",
+               "filename":"terraform_1.3.9_freebsd_amd64.zip",
+               "name":"terraform",
+               "os":"freebsd",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_freebsd_amd64.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"arm",
+               "filename":"terraform_1.3.9_freebsd_arm.zip",
+               "name":"terraform",
+               "os":"freebsd",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_freebsd_arm.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"386",
+               "filename":"terraform_1.3.9_linux_386.zip",
+               "name":"terraform",
+               "os":"linux",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_linux_386.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"amd64",
+               "filename":"terraform_1.3.9_linux_amd64.zip",
+               "name":"terraform",
+               "os":"linux",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_linux_amd64.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"arm",
+               "filename":"terraform_1.3.9_linux_arm.zip",
+               "name":"terraform",
+               "os":"linux",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_linux_arm.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"arm64",
+               "filename":"terraform_1.3.9_linux_arm64.zip",
+               "name":"terraform",
+               "os":"linux",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_linux_arm64.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"386",
+               "filename":"terraform_1.3.9_openbsd_386.zip",
+               "name":"terraform",
+               "os":"openbsd",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_openbsd_386.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"amd64",
+               "filename":"terraform_1.3.9_openbsd_amd64.zip",
+               "name":"terraform",
+               "os":"openbsd",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_openbsd_amd64.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"amd64",
+               "filename":"terraform_1.3.9_solaris_amd64.zip",
+               "name":"terraform",
+               "os":"solaris",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_solaris_amd64.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"386",
+               "filename":"terraform_1.3.9_windows_386.zip",
+               "name":"terraform",
+               "os":"windows",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_windows_386.zip",
+               "version":"1.3.9"
+            },
+            {
+               "arch":"amd64",
+               "filename":"terraform_1.3.9_windows_amd64.zip",
+               "name":"terraform",
+               "os":"windows",
+               "url":"https://releases.hashicorp.com/terraform/1.3.9/terraform_1.3.9_windows_amd64.zip",
+               "version":"1.3.9"
+            }
+         ],
+         "name":"terraform",
+         "shasums":"terraform_1.3.9_SHA256SUMS",
+         "shasums_signature":"terraform_1.3.9_SHA256SUMS.sig",
+         "shasums_signatures":[
+            "terraform_1.3.9_SHA256SUMS.72D7468F.sig",
+            "terraform_1.3.9_SHA256SUMS.sig"
+         ],
+         "version":"1.3.9"
+      }
+   }
 }
 ```
