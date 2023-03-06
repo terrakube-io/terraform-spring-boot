@@ -13,9 +13,11 @@ public class TerraformAutoConfiguration {
 
     @Bean
     public TerraformClient terraformClient(@NonNull TerraformProperties tfProperties) {
+
             return TerraformClient.builder()
                     .showColor(tfProperties.isEnableColor())
                     .jsonOutput(tfProperties.isJsonOutput())
+                    .terraformReleasesUrl(tfProperties.getTerraformReleasesUrl())
                     .build();
     }
 }

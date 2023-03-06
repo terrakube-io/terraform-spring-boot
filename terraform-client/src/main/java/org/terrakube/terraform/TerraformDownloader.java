@@ -10,7 +10,6 @@ import org.apache.commons.lang3.SystemUtils;
 
 import java.io.*;
 import java.net.URL;
-import java.nio.file.Files;
 import java.nio.file.attribute.FileAttribute;
 import java.nio.file.attribute.PosixFilePermission;
 import java.nio.file.attribute.PosixFilePermissions;
@@ -27,7 +26,7 @@ public class TerraformDownloader {
     private static final String TERRAFORM_DIRECTORY = "/.terraform-spring-boot/terraform/";
 
     private static final String TEMP_DIRECTORY = "/.terraform-spring-boot/";
-    private static final String TERRAFORM_RELEASES_URL = "https://releases.hashicorp.com/terraform/index.json";
+    public static final String TERRAFORM_RELEASES_URL = "https://releases.hashicorp.com/terraform/index.json";
 
     private TerraformResponse terraformReleases;
     private File terraformDownloadDirectory;
@@ -35,13 +34,23 @@ public class TerraformDownloader {
     private String userHomeDirectory;
 
     public TerraformDownloader() {
-        log.info("Initialize TerraformDownloader");
+        try {
+            log.info("Initialize TerraformDownloader using default URL");
+            createDownloadTempDirectory();
+            getTerraformReleases(TERRAFORM_RELEASES_URL);
+        } catch (IOException ex) {
+            log.error(ex.getMessage());
+        }
+    }
+
+    public TerraformDownloader(String terraformReleasesUrl) {
+        log.info("Initialize TerraformDownloader using custom URL");
 
         try {
             createDownloadTempDirectory();
-            getTerraformReleases();
+            getTerraformReleases(terraformReleasesUrl);
         } catch (IOException ex) {
-            throw new RuntimeException("Error creating TerraformDownloader");
+            log.error(ex.getMessage());
         }
     }
 
@@ -66,7 +75,7 @@ public class TerraformDownloader {
         log.info("Validate/Create terraform directory: {}", terrafomVersionPath);
     }
 
-    private void getTerraformReleases() throws IOException {
+    private void getTerraformReleases(String terraformReleasesUrl) throws IOException {
         log.info("Downloading terraform releases list");
 
         ObjectMapper objectMapper = new ObjectMapper();
@@ -96,7 +105,7 @@ public class TerraformDownloader {
         }
 
 
-        FileUtils.copyURLToFile(new URL(TERRAFORM_RELEASES_URL), tempFile);
+        FileUtils.copyURLToFile(new URL(terraformReleasesUrl), tempFile);
         this.terraformReleases = objectMapper.readValue(tempFile, TerraformResponse.class);
         log.info("Deleting Temp {}",tempFile.getAbsolutePath());
         log.info("Found {} terraform releases", this.terraformReleases.getVersions().size());

@@ -30,7 +30,7 @@ public class TerraformClient implements AutoCloseable {
     private static final String TERRAFORM_PARAM_DISABLE_USER_INPUT = "-input=false";
 
     private final ExecutorService executor = Executors.newWorkStealingPool();
-    private final TerraformDownloader terraformDownloader = new TerraformDownloader();
+    private TerraformDownloader terraformDownloader;
 
     private File workingDirectory;
     private boolean inheritIO;
@@ -38,6 +38,7 @@ public class TerraformClient implements AutoCloseable {
     private boolean jsonOutput;
     private String terraformVersion;
     private String backendConfig;
+    private String terraformReleasesUrl;
 
     @Singular
     private Map<String, String> environmentVariables;
@@ -246,6 +247,18 @@ public class TerraformClient implements AutoCloseable {
 
 
     private ProcessLauncher getTerraformLauncher(String terraformVersion, File workingDirectory, String terraformBackendConfigFileName, Map<String, String> terraformVariables, Map<String, String> terraformEnvironmentVariables, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand command) throws IOException {
+        if (this.terraformReleasesUrl != null && !terraformReleasesUrl.isEmpty()) {
+            log.info("Creating terraform downloader using custom terraform release URL: {}", this.terraformReleasesUrl);
+            synchronized (this) {
+                this.terraformDownloader = new TerraformDownloader(this.terraformReleasesUrl);
+            }
+        } else {
+            log.info("Creating terraform downloader using default terraform release URL: {}", TerraformDownloader.TERRAFORM_RELEASES_URL);
+            synchronized (this) {
+                this.terraformDownloader = new TerraformDownloader(TerraformDownloader.TERRAFORM_RELEASES_URL);
+            }
+        }
+
         ProcessLauncher launcher = new ProcessLauncher(this.executor, this.terraformDownloader.downloadTerraformVersion(terraformVersion), command.getLabel());
         launcher.setDirectory(workingDirectory);
         launcher.setInheritIO(this.isInheritIO());
@@ -287,7 +300,7 @@ public class TerraformClient implements AutoCloseable {
                 launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN);
                 launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
 
-                if(command.equals(TerraformCommand.planDestroy)){
+                if (command.equals(TerraformCommand.planDestroy)) {
                     launcher.appendCommands(TERRAFORM_PARAM_PLAN_DESTROY);
                 }
                 break;

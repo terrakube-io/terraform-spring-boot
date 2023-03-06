@@ -16,4 +16,5 @@ public class TerraformProperties {
 
     private boolean enableColor;
     private boolean jsonOutput;
+    private String terraformReleasesUrl;
 }
