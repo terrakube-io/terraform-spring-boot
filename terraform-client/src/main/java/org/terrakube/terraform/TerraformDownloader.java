@@ -87,19 +87,18 @@ public class TerraformDownloader {
 
         File tempFile;
 
-        if(SystemUtils.IS_OS_UNIX) {
+        if (SystemUtils.IS_OS_UNIX) {
             FileAttribute<Set<PosixFilePermission>> attr = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"));
             tempFile = File.createTempFile("terraform-", "-release", new File(tempPath));  // Compliant
-        }
-        else {
+        } else {
             tempFile = File.createTempFile("terraform-", "-release", new File(tempPath));   // Compliant
-            if(tempFile.setReadable(true, true)){
+            if (tempFile.setReadable(true, true)) {
                 log.info("File permission Readable applied");
             }
-            if(tempFile.setWritable(true, true)){
+            if (tempFile.setWritable(true, true)) {
                 log.info("File permission Writable applied");
             }
-            if(tempFile.setExecutable(true, true)){
+            if (tempFile.setExecutable(true, true)) {
                 log.info("File permission Executable applied");
             }
         }
@@ -107,7 +106,7 @@ public class TerraformDownloader {
 
         FileUtils.copyURLToFile(new URL(terraformReleasesUrl), tempFile);
         this.terraformReleases = objectMapper.readValue(tempFile, TerraformResponse.class);
-        log.info("Deleting Temp {}",tempFile.getAbsolutePath());
+        log.info("Deleting Temp {}", tempFile.getAbsolutePath());
         log.info("Found {} terraform releases", this.terraformReleases.getVersions().size());
     }
 
@@ -203,7 +202,7 @@ public class TerraformDownloader {
 
                     if (SystemUtils.IS_OS_LINUX || SystemUtils.IS_OS_MAC) {
                         File updateAccess = new File(newFilePath);
-                        if(updateAccess.setExecutable(true, true))
+                        if (updateAccess.setExecutable(true, true))
                             log.info("Terraform setExecutable successful");
                         else
                             log.error("Terraform setExecutable successful");

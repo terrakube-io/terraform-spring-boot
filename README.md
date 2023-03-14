@@ -172,13 +172,15 @@ public class SpringStarterSampleApp implements CommandLineRunner {
             environmentVariables.put("ARM_CLIENT_SECRET","<Azure Client Secret>");
             environmentVariables.put("ARM_TENANT_ID","<Azure Tenant ID>");
 
+            TerraformProcessData terraformProcessData = TerraformProcessData.builder()
+                    .terraformVersion(terraformVersion)
+                    .workingDirectory(workingDirectory)
+                    .terraformVariables(terraformParameters)
+                    .terraformEnvironmentVariables(environmentVariables)
+                    .build();
+
             boolean execution = terraformClient.plan(
-                    terraformVersion,
-                    workingDirectory,
-                    backendStateFile,
-                    null, //var-file is optional
-                    terraformParameters,
-                    environmentVariables,
+                    terraformProcessData,
                     output,
                     errorOutput).get();
 
