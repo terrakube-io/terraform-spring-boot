@@ -27,7 +27,7 @@ Simply add the following dependency to your project's `pom.xml` will enable you 
 <dependency>
     <groupId>org.terrakube.terraform</groupId>
     <artifactId>terraform-client</artifactId>
-    <version>0.8.0</version>
+    <version>0.9.0</version>
 </dependency>
 ```
 
@@ -92,7 +92,7 @@ Let's still use the terraform file `storage.tf` under `/some/local/path/` folder
 <dependency>
     <groupId>org.terrakube.terraform</groupId>
     <artifactId>terraform-spring-boot-starter</artifactId>
-    <version>0.7.0</version>
+    <version>0.9.0</version>
 </dependency>
 ```
 
@@ -172,12 +172,15 @@ public class SpringStarterSampleApp implements CommandLineRunner {
             environmentVariables.put("ARM_CLIENT_SECRET","<Azure Client Secret>");
             environmentVariables.put("ARM_TENANT_ID","<Azure Tenant ID>");
 
+            TerraformProcessData terraformProcessData = TerraformProcessData.builder()
+                    .terraformVersion(terraformVersion)
+                    .workingDirectory(workingDirectory)
+                    .terraformVariables(terraformParameters)
+                    .terraformEnvironmentVariables(environmentVariables)
+                    .build();
+
             boolean execution = terraformClient.plan(
-                    terraformVersion,
-                    workingDirectory,
-                    backendStateFile,
-                    terraformParameters,
-                    environmentVariables,
+                    terraformProcessData,
                     output,
                     errorOutput).get();
 
