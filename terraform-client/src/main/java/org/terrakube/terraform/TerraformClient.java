@@ -18,6 +18,8 @@ import java.util.function.*;
 public class TerraformClient implements AutoCloseable {
 
     private static final String TERRAFORM_PARAM_VARIABLE = "--var";
+
+    private static final String TERRAFORM_PARAM_VARIABLE_FILE = "-var-file";
     private static final String TERRAFORM_PARAM_AUTO_APPROVED = "-auto-approve";
     private static final String TERRAFORM_PARAM_NO_COLOR = "-no-color";
     private static final String TERRAFORM_PARAM_FORCE = "-force";
@@ -39,6 +41,8 @@ public class TerraformClient implements AutoCloseable {
     private String terraformVersion;
     private String backendConfig;
     private String terraformReleasesUrl;
+
+    private String varFileName;
 
     @Singular
     private Map<String, String> environmentVariables;
@@ -65,6 +69,7 @@ public class TerraformClient implements AutoCloseable {
                 terraformVersion,
                 workingDirectory,
                 terraformBackendConfigFileName,
+                null,
                 new HashMap(),
                 new HashMap(),
                 outputListener,
@@ -82,6 +87,7 @@ public class TerraformClient implements AutoCloseable {
                 terraformVersion,
                 workingDirectory,
                 terraformBackendConfigFileName,
+                null,
                 new HashMap(),
                 new HashMap(),
                 outputListener,
@@ -99,6 +105,7 @@ public class TerraformClient implements AutoCloseable {
                 terraformVersion,
                 workingDirectory,
                 terraformBackendConfigFileName,
+                null,
                 new HashMap<>(),
                 new HashMap<>(),
                 outputListener,
@@ -111,11 +118,12 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.init);
     }
 
-    public CompletableFuture<Boolean> plan(@NonNull String terraformVersion, @NonNull File workingDirectory, String terraformBackendConfigFileName, @NonNull Map<String, String> terraformVariables, @NonNull Map<String, String> terraformEnvironmentVariables, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> plan(@NonNull String terraformVersion, @NonNull File workingDirectory, String terraformBackendConfigFileName, String varFileName, @NonNull Map<String, String> terraformVariables, @NonNull Map<String, String> terraformEnvironmentVariables, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformVersion,
                 workingDirectory,
                 terraformBackendConfigFileName,
+                varFileName,
                 terraformVariables,
                 terraformEnvironmentVariables,
                 outputListener,
@@ -123,11 +131,12 @@ public class TerraformClient implements AutoCloseable {
                 TerraformCommand.plan);
     }
 
-    public CompletableFuture<Boolean> planDestroy(@NonNull String terraformVersion, @NonNull File workingDirectory, String terraformBackendConfigFileName, @NonNull Map<String, String> terraformVariables, @NonNull Map<String, String> terraformEnvironmentVariables, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> planDestroy(@NonNull String terraformVersion, @NonNull File workingDirectory, String terraformBackendConfigFileName, String varFileName, @NonNull Map<String, String> terraformVariables, @NonNull Map<String, String> terraformEnvironmentVariables, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformVersion,
                 workingDirectory,
                 terraformBackendConfigFileName,
+                varFileName,
                 terraformVariables,
                 terraformEnvironmentVariables,
                 outputListener,
@@ -140,11 +149,12 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.plan);
     }
 
-    public CompletableFuture<Boolean> apply(@NonNull String terraformVersion, @NonNull File workingDirectory, String terraformBackendConfigFileName, @NonNull Map<String, String> terraformVariables, @NonNull Map<String, String> terraformEnvironmentVariables, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> apply(@NonNull String terraformVersion, @NonNull File workingDirectory, String terraformBackendConfigFileName,  String varFileName, @NonNull Map<String, String> terraformVariables, @NonNull Map<String, String> terraformEnvironmentVariables, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformVersion,
                 workingDirectory,
                 terraformBackendConfigFileName,
+                varFileName,
                 terraformVariables,
                 terraformEnvironmentVariables,
                 outputListener,
@@ -162,6 +172,7 @@ public class TerraformClient implements AutoCloseable {
                 terraformVersion,
                 workingDirectory,
                 terraformBackendConfigFileName,
+                null,
                 terraformVariables,
                 terraformEnvironmentVariables,
                 outputListener,
@@ -179,6 +190,7 @@ public class TerraformClient implements AutoCloseable {
                 terraformVersion,
                 workingDirectory,
                 null,
+                null,
                 new HashMap<>(),
                 new HashMap<>(),
                 outputListener,
@@ -191,7 +203,7 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.output);
     }
 
-    private CompletableFuture<Boolean> run(String terraformVersion, File workingDirectory, String terraformBackendConfigFileName, Map<String, String> terraformVariables, Map<String, String> terraformEnvironmentVariables, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand... commands) throws IOException {
+    private CompletableFuture<Boolean> run(String terraformVersion, File workingDirectory, String terraformBackendConfigFileName, String varFileName, Map<String, String> terraformVariables, Map<String, String> terraformEnvironmentVariables, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand... commands) throws IOException {
         assert commands.length > 0;
         ProcessLauncher[] launchers = new ProcessLauncher[commands.length];
         for (int i = 0; i < commands.length; i++) {
@@ -199,6 +211,7 @@ public class TerraformClient implements AutoCloseable {
                     terraformVersion,
                     workingDirectory,
                     terraformBackendConfigFileName,
+                    varFileName,
                     terraformVariables,
                     terraformEnvironmentVariables,
                     outputListener,
@@ -242,11 +255,11 @@ public class TerraformClient implements AutoCloseable {
     }
 
     private ProcessLauncher getTerraformLauncher(TerraformCommand command) throws IOException {
-        return getTerraformLauncher(this.terraformVersion, this.workingDirectory, this.backendConfig, this.terraformParameters, this.environmentVariables, this.outputListener, this.errorListener, command);
+        return getTerraformLauncher(this.terraformVersion, this.workingDirectory, this.backendConfig, this.varFileName, this.terraformParameters, this.environmentVariables, this.outputListener, this.errorListener, command);
     }
 
 
-    private ProcessLauncher getTerraformLauncher(String terraformVersion, File workingDirectory, String terraformBackendConfigFileName, Map<String, String> terraformVariables, Map<String, String> terraformEnvironmentVariables, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand command) throws IOException {
+    private ProcessLauncher getTerraformLauncher(String terraformVersion, File workingDirectory, String terraformBackendConfigFileName, String varFileName, Map<String, String> terraformVariables, Map<String, String> terraformEnvironmentVariables, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand command) throws IOException {
         if (this.terraformReleasesUrl != null && !terraformReleasesUrl.isEmpty()) {
             log.info("Creating terraform downloader using custom terraform release URL: {}", this.terraformReleasesUrl);
             synchronized (this) {
@@ -294,9 +307,13 @@ public class TerraformClient implements AutoCloseable {
                 break;
             case planDestroy:
             case plan:
-                for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
-                    launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
-                }
+                if(varFileName == null)
+                    for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
+                        launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
+                    }
+                else
+                    launcher.appendCommands(TERRAFORM_PARAM_VARIABLE_FILE, varFileName);
+
                 launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN);
                 launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
 
@@ -305,14 +322,20 @@ public class TerraformClient implements AutoCloseable {
                 }
                 break;
             case apply:
-                if (terraformVariables.entrySet().isEmpty()) {
-                    launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
-                    launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
-                    launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
-                } else {
-                    for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
-                        launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
+                if(varFileName == null) {
+                    if (terraformVariables.entrySet().isEmpty()) {
+                        launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
+                        launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
+                        launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
+                    } else {
+                        for (Map.Entry<String, String> entry : terraformVariables.entrySet()) {
+                            launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
+                        }
+                        launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
+                        launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
                     }
+                }else{
+                    launcher.appendCommands(TERRAFORM_PARAM_VARIABLE_FILE, varFileName);
                     launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
                     launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
                 }
