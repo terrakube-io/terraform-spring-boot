@@ -214,7 +214,7 @@ public class TerraformClient implements AutoCloseable {
     }
 
     private void checkVarFileParam(TerraformProcessData terraformProcessData) {
-        if (terraformProcessData.getVarFileName() != null ) {
+        if (terraformProcessData.getVarFileName() != null) {
             throw new IllegalArgumentException("varFile parameter should be null for this terraform command");
         }
     }
@@ -281,6 +281,7 @@ public class TerraformClient implements AutoCloseable {
             switch (command) {
                 case plan:
                 case apply:
+                case planDestroy:
                 case destroy:
                     launcher.appendCommands(TERRAFORM_PARAM_JSON);
                     break;
@@ -297,13 +298,14 @@ public class TerraformClient implements AutoCloseable {
                 break;
             case planDestroy:
             case plan:
-                if(terraformProcessData.getVarFileName() == null)
+                if (terraformProcessData.getVarFileName() == null)
                     for (Map.Entry<String, String> entry : terraformProcessData.getTerraformVariables().entrySet()) {
                         launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                     }
-                else
+                else {
+                    log.info("Using plan with var file parameter");
                     launcher.appendCommands(TERRAFORM_PARAM_VARIABLE_FILE, terraformProcessData.getVarFileName());
-
+                }
                 launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN);
                 launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
 
@@ -312,7 +314,7 @@ public class TerraformClient implements AutoCloseable {
                 }
                 break;
             case apply:
-                if(terraformProcessData.getVarFileName() == null) {
+                if (terraformProcessData.getVarFileName() == null) {
                     if (terraformProcessData.getTerraformVariables().entrySet().isEmpty()) {
                         launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
                         launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
@@ -324,7 +326,8 @@ public class TerraformClient implements AutoCloseable {
                         launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
                         launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
                     }
-                }else{
+                } else {
+                    log.info("Using apply with var file parameter");
                     launcher.appendCommands(TERRAFORM_PARAM_VARIABLE_FILE, terraformProcessData.getVarFileName());
                     launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
                     launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
@@ -338,8 +341,13 @@ public class TerraformClient implements AutoCloseable {
                 else
                     launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
 
-                for (Map.Entry<String, String> entry : terraformProcessData.getTerraformVariables().entrySet()) {
-                    launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
+                if (terraformProcessData.getVarFileName() == null) {
+                    for (Map.Entry<String, String> entry : terraformProcessData.getTerraformVariables().entrySet()) {
+                        launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
+                    }
+                } else {
+                    log.info("Using Destroy with var file parameter");
+                    launcher.appendCommands(TERRAFORM_PARAM_VARIABLE_FILE, terraformProcessData.getVarFileName());
                 }
 
                 launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
@@ -360,7 +368,7 @@ public class TerraformClient implements AutoCloseable {
         return launcher;
     }
 
-    public TerraformDownloader createTerraformDownloader(){
+    public TerraformDownloader createTerraformDownloader() {
         synchronized (this) {
             if (this.terraformReleasesUrl != null && !terraformReleasesUrl.isEmpty()) {
                 log.info("Creating terraform downloader using custom terraform release URL: {}", this.terraformReleasesUrl);
