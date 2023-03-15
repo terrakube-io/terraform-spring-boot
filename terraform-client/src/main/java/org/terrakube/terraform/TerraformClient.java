@@ -303,7 +303,7 @@ public class TerraformClient implements AutoCloseable {
                         launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                     }
                 else {
-                    log.info("Using play with var file parameter");
+                    log.info("Using plan with var file parameter");
                     launcher.appendCommands(TERRAFORM_PARAM_VARIABLE_FILE, terraformProcessData.getVarFileName());
                 }
                 launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN);
