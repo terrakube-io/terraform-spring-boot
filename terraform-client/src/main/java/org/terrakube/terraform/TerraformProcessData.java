@@ -14,6 +14,7 @@ public class TerraformProcessData {
     @NonNull File workingDirectory;
     String terraformBackendConfigFileName;
     String varFileName;
+    File sshFile;
     @Singular Map<String, String> terraformVariables;
     @Singular Map<String, String> terraformEnvironmentVariables;
 }
