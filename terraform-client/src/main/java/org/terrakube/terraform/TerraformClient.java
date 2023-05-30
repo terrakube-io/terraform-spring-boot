@@ -386,12 +386,12 @@ public class TerraformClient implements AutoCloseable {
             }
 
         if (!this.showColor)
-            initSSHCommand.join("", TERRAFORM_PARAM_NO_COLOR);
+            initSSHCommand = initSSHCommand.join("", TERRAFORM_PARAM_NO_COLOR);
 
         if (terraformProcessData.getTerraformBackendConfigFileName() != null) {
-            initSSHCommand.join(" ", TERRAFORM_PARAM_BACKEND.concat(terraformProcessData.getTerraformBackendConfigFileName()));
+            initSSHCommand = initSSHCommand.join(" ", TERRAFORM_PARAM_BACKEND.concat(terraformProcessData.getTerraformBackendConfigFileName()));
         }
-        initSSHCommand.join(" ", TERRAFORM_PARAM_DISABLE_USER_INPUT);
+        initSSHCommand = initSSHCommand.join(" ", TERRAFORM_PARAM_DISABLE_USER_INPUT);
 
         log.warn("Running terraform init with command {},", initSSHCommand);
         processLauncher.appendCommands(initSSHCommand);
