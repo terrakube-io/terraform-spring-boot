@@ -261,8 +261,14 @@ public class TerraformClient implements AutoCloseable {
 
     private ProcessLauncher getTerraformLauncher(TerraformProcessData terraformProcessData, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand command) throws IOException {
         TerraformDownloader terraformDownloader = createTerraformDownloader();
+        String terraformPath = terraformDownloader.downloadTerraformVersion(terraformProcessData.getTerraformVersion());
 
-        ProcessLauncher launcher = new ProcessLauncher(this.executor, terraformDownloader.downloadTerraformVersion(terraformProcessData.getTerraformVersion()), command.getLabel());
+        if (terraformProcessData.sshFile != null && command.equals(TerraformCommand.init)) {
+            return getTerraformInitWithSSH(terraformPath, terraformProcessData, outputListener, errorListener);
+        }
+
+        ProcessLauncher launcher = new ProcessLauncher(this.executor, terraformPath, command.getLabel());
+
         launcher.setDirectory(terraformProcessData.getWorkingDirectory());
         launcher.setInheritIO(this.isInheritIO());
 
@@ -366,6 +372,33 @@ public class TerraformClient implements AutoCloseable {
         launcher.setOutputListener(outputListener);
         launcher.setErrorListener(errorListener);
         return launcher;
+    }
+
+    private ProcessLauncher getTerraformInitWithSSH(String terraformPath, TerraformProcessData terraformProcessData, Consumer<String> outputListener, Consumer<String> errorListener) {
+        String initSSHCommand = String.format("GIT_SSH_COMMAND='ssh -i %s -o StrictHostKeyChecking=no' %s init", terraformProcessData.getSshFile().getAbsolutePath(), terraformPath);
+        ProcessLauncher processLauncher = new ProcessLauncher(this.executor, "bash", "-c");
+        processLauncher.setInheritIO(this.isInheritIO());
+        processLauncher.setDirectory(terraformProcessData.getWorkingDirectory());
+
+        if (terraformProcessData.getTerraformEnvironmentVariables() != null)
+            for (Map.Entry<String, String> entry : terraformProcessData.getTerraformEnvironmentVariables().entrySet()) {
+                processLauncher.setEnvironmentVariable(entry.getKey(), entry.getValue());
+            }
+
+        if (!this.showColor)
+            initSSHCommand = initSSHCommand.join("", TERRAFORM_PARAM_NO_COLOR);
+
+        if (terraformProcessData.getTerraformBackendConfigFileName() != null) {
+            initSSHCommand = initSSHCommand.join(" ", TERRAFORM_PARAM_BACKEND.concat(terraformProcessData.getTerraformBackendConfigFileName()));
+        }
+        initSSHCommand = initSSHCommand.join(" ", TERRAFORM_PARAM_DISABLE_USER_INPUT);
+
+        log.warn("Running terraform init with command {},", initSSHCommand);
+        processLauncher.appendCommands(initSSHCommand);
+        processLauncher.setOutputListener(outputListener);
+        processLauncher.setErrorListener(errorListener);
+
+        return processLauncher;
     }
 
     public TerraformDownloader createTerraformDownloader() {
