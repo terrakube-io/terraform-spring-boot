@@ -75,7 +75,6 @@ public class TerraformClient implements AutoCloseable {
 
     public CompletableFuture<Boolean> show() throws IOException {
         this.checkRunningParameters();
-
         return this.run(TerraformCommand.show);
     }
 
