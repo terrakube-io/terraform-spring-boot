@@ -66,7 +66,6 @@ public class TerraformClient implements AutoCloseable {
     public CompletableFuture<Boolean> show(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
-        checkTerraformEnvVariablesParam(terraformProcessData);
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -82,7 +81,6 @@ public class TerraformClient implements AutoCloseable {
     public CompletableFuture<Boolean> showPlan(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
-        checkTerraformEnvVariablesParam(terraformProcessData);
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -98,7 +96,6 @@ public class TerraformClient implements AutoCloseable {
     public CompletableFuture<Boolean> init(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
-        checkTerraformEnvVariablesParam(terraformProcessData);
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -163,7 +160,6 @@ public class TerraformClient implements AutoCloseable {
         checkBackendConfigFile(terraformProcessData);
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
-        checkTerraformEnvVariablesParam(terraformProcessData);
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -222,12 +218,6 @@ public class TerraformClient implements AutoCloseable {
     private void checkTerraformVariablesParam(TerraformProcessData terraformProcessData) {
         if (!terraformProcessData.getTerraformVariables().isEmpty()) {
             throw new IllegalArgumentException("terraform variables parameter should be empty for this terraform command");
-        }
-    }
-
-    private void checkTerraformEnvVariablesParam(TerraformProcessData terraformProcessData) {
-        if (!terraformProcessData.getTerraformEnvironmentVariables().isEmpty()) {
-            throw new IllegalArgumentException("terraform environment variables parameter should be empty for this terraform command");
         }
     }
 
