@@ -221,12 +221,6 @@ public class TerraformClient implements AutoCloseable {
         }
     }
 
-    private void checkTerraformEnvVariablesParam(TerraformProcessData terraformProcessData) {
-        if (!terraformProcessData.getTerraformEnvironmentVariables().isEmpty()) {
-            throw new IllegalArgumentException("terraform environment variables parameter should be empty for this terraform command");
-        }
-    }
-
     private void checkBackendConfigFile(TerraformProcessData terraformProcessData) {
         if (terraformProcessData.getTerraformBackendConfigFileName() != null) {
             throw new IllegalArgumentException("terraform backend config file name should be null for this terraform command");
