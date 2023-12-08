@@ -161,7 +161,6 @@ public class TerraformClient implements AutoCloseable {
         checkBackendConfigFile(terraformProcessData);
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
-        checkTerraformEnvVariablesParam(terraformProcessData);
         return this.run(
                 terraformProcessData,
                 outputListener,
