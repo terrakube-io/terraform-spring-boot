@@ -66,7 +66,6 @@ public class TerraformClient implements AutoCloseable {
     public CompletableFuture<Boolean> show(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
-        checkTerraformEnvVariablesParam(terraformProcessData);
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -76,13 +75,13 @@ public class TerraformClient implements AutoCloseable {
 
     public CompletableFuture<Boolean> show() throws IOException {
         this.checkRunningParameters();
+
         return this.run(TerraformCommand.show);
     }
 
     public CompletableFuture<Boolean> showPlan(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
-        checkTerraformEnvVariablesParam(terraformProcessData);
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -98,7 +97,6 @@ public class TerraformClient implements AutoCloseable {
     public CompletableFuture<Boolean> init(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
-        checkTerraformEnvVariablesParam(terraformProcessData);
         return this.run(
                 terraformProcessData,
                 outputListener,
