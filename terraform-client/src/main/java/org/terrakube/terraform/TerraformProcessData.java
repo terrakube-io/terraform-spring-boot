@@ -15,6 +15,10 @@ public class TerraformProcessData {
     String terraformBackendConfigFileName;
     String varFileName;
     File sshFile;
+    @Builder.Default
+    boolean refresh = true;
+    @Builder.Default
+    boolean refreshOnly = false;
     @Singular Map<String, String> terraformVariables;
     @Singular Map<String, String> terraformEnvironmentVariables;
 }

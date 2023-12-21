@@ -30,6 +30,8 @@ public class TerraformClient implements AutoCloseable {
     private static final String TERRAFORM_PARAM_PLAN_DESTROY = "-destroy";
     private static final String TERRAFORM_PARAM_OUTPUT_PLAN_FILE = "terraformLibrary.tfPlan";
     private static final String TERRAFORM_PARAM_DISABLE_USER_INPUT = "-input=false";
+    private static final String TERRAFORM_PLAN_REFRESH_FALSE="-refresh=false";
+    private static final String TERRAFORM_PLAN_REFRESH_ONLY="-refresh-only";
 
     private final ExecutorService executor = Executors.newWorkStealingPool();
 
@@ -294,6 +296,14 @@ public class TerraformClient implements AutoCloseable {
                 break;
             case planDestroy:
             case plan:
+                if (!terraformProcessData.isRefresh()){
+                    launcher.appendCommands(TERRAFORM_PLAN_REFRESH_FALSE);
+                }
+
+                if (terraformProcessData.isRefreshOnly()){
+                    launcher.appendCommands(TERRAFORM_PLAN_REFRESH_ONLY);
+                }
+
                 if (terraformProcessData.getVarFileName() == null)
                     for (Map.Entry<String, String> entry : terraformProcessData.getTerraformVariables().entrySet()) {
                         launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
