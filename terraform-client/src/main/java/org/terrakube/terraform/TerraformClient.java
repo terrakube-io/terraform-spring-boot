@@ -253,7 +253,7 @@ public class TerraformClient implements AutoCloseable {
 
     private ProcessLauncher getTerraformLauncher(TerraformProcessData terraformProcessData, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand command) throws IOException {
         TerraformDownloader terraformDownloader = createTerraformDownloader();
-        String terraformPath = terraformDownloader.downloadTerraformVersion(terraformProcessData.getTerraformVersion());
+        String terraformPath = terraformProcessData.isTofu() ? terraformDownloader.downloadTofuVersion(terraformProcessData.getTerraformVersion()) : terraformDownloader.downloadTerraformVersion(terraformProcessData.getTerraformVersion());
 
         if (terraformProcessData.sshFile != null && command.equals(TerraformCommand.init)) {
             return getTerraformInitWithSSH(terraformPath, terraformProcessData, outputListener, errorListener);

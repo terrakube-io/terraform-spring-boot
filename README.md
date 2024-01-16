@@ -191,6 +191,18 @@ public class SpringStarterSampleApp implements CommandLineRunner {
 }
 ```
 
+### OpenTofu Support
+
+When using with opentofu you need to use the terraformProcessData like the following:
+
+```java
+        TerraformProcessData terraformProcessData = TerraformProcessData.builder()
+                .terraformVersion("1.6.0")
+                .workingDirectory(new File("/some/terraform/path"))
+                .tofu(true)
+                .build();
+```
+
 ### Custom Terraform Releases URL
 
 You can customize the URL from where you download your terraform binary.
