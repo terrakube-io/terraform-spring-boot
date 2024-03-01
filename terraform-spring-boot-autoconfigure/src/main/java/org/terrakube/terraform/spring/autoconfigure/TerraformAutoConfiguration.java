@@ -18,6 +18,7 @@ public class TerraformAutoConfiguration {
                     .showColor(tfProperties.isEnableColor())
                     .jsonOutput(tfProperties.isJsonOutput())
                     .terraformReleasesUrl(tfProperties.getTerraformReleasesUrl())
+                    .tofuReleasesUrl(tfProperties.getTofuReleasesUrl())
                     .build();
     }
 }
