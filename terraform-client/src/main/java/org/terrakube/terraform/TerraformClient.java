@@ -32,6 +32,7 @@ public class TerraformClient implements AutoCloseable {
     private static final String TERRAFORM_PARAM_DISABLE_USER_INPUT = "-input=false";
     private static final String TERRAFORM_PLAN_REFRESH_FALSE="-refresh=false";
     private static final String TERRAFORM_PLAN_REFRESH_ONLY="-refresh-only";
+    private static final String TF_STATE_PULL="pull";
 
     private final ExecutorService executor = Executors.newWorkStealingPool();
 
@@ -116,6 +117,14 @@ public class TerraformClient implements AutoCloseable {
                 outputListener,
                 errorListener,
                 TerraformCommand.plan);
+    }
+
+    public CompletableFuture<Boolean> statePull(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+        return this.run(
+                terraformProcessData,
+                outputListener,
+                errorListener,
+                TerraformCommand.statePull);
     }
 
     public CompletableFuture<Boolean> planDestroy(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
@@ -365,6 +374,9 @@ public class TerraformClient implements AutoCloseable {
             case showPlan:
                 launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
                 break;
+            case statePull:
+                log.info("tf state pull command");
+                launcher.appendCommands(TF_STATE_PULL);
             default:
                 break;
         }
