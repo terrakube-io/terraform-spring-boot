@@ -1,5 +1,6 @@
 package org.terrakube.terraform;
 
+import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
 import lombok.Setter;
@@ -10,12 +11,9 @@ import org.apache.commons.lang3.SystemUtils;
 
 import java.io.*;
 import java.net.URL;
-import java.nio.file.attribute.FileAttribute;
-import java.nio.file.attribute.PosixFilePermission;
-import java.nio.file.attribute.PosixFilePermissions;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -29,8 +27,10 @@ public class TerraformDownloader {
     private static final String TOFU_DIRECTORY = "/.terraform-spring-boot/tofu/";
     private static final String TEMP_DIRECTORY = "/.terraform-spring-boot/";
     public static final String TERRAFORM_RELEASES_URL = "https://releases.hashicorp.com/terraform/index.json";
+    public static final String TOFU_RELEASES_URL = "https://api.github.com/repos/opentofu/opentofu/releases";
 
     private TerraformResponse terraformReleases;
+    private List<TofuRelease> tofuReleases;
     private File terraformDownloadDirectory;
 
     private File tofuDownloadDirectory;
@@ -43,18 +43,20 @@ public class TerraformDownloader {
             createDownloadTempDirectory();
             createDownloadTofuTempDirectory();
             getTerraformReleases(TERRAFORM_RELEASES_URL);
+            getTofuReleases(TOFU_RELEASES_URL);
         } catch (IOException ex) {
             log.error(ex.getMessage());
         }
     }
 
-    public TerraformDownloader(String terraformReleasesUrl) {
+    public TerraformDownloader(String terraformReleasesUrl, String tofuReleasesUrl) {
         log.info("Initialize TerraformDownloader using custom URL");
 
         try {
             createDownloadTempDirectory();
             createDownloadTofuTempDirectory();
             getTerraformReleases(terraformReleasesUrl);
+            getTofuReleases(tofuReleasesUrl);
         } catch (IOException ex) {
             log.error(ex.getMessage());
         }
@@ -115,10 +117,9 @@ public class TerraformDownloader {
         File tempFile;
 
         if (SystemUtils.IS_OS_UNIX) {
-            FileAttribute<Set<PosixFilePermission>> attr = PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------"));
-            tempFile = File.createTempFile("terraform-", "-release", new File(tempPath));  // Compliant
+            tempFile = File.createTempFile("terraform-", "-release", new File(tempPath)); // Compliant
         } else {
-            tempFile = File.createTempFile("terraform-", "-release", new File(tempPath));   // Compliant
+            tempFile = File.createTempFile("terraform-", "-release", new File(tempPath)); // Compliant
             if (tempFile.setReadable(true, true)) {
                 log.info("File permission Readable applied");
             }
@@ -130,11 +131,94 @@ public class TerraformDownloader {
             }
         }
 
-
         FileUtils.copyURLToFile(new URL(terraformReleasesUrl), tempFile);
         this.terraformReleases = objectMapper.readValue(tempFile, TerraformResponse.class);
         log.info("Deleting Temp {}", tempFile.getAbsolutePath());
         log.info("Found {} terraform releases", this.terraformReleases.getVersions().size());
+    }
+
+    private void getTofuReleases(String tofuReleasesUrl) throws IOException {
+        log.info("Downloading tofu releases list");
+
+        ObjectMapper objectMapper = new ObjectMapper();
+        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+
+        String tempPath = userHomeDirectory.concat(
+                FilenameUtils.separatorsToSystem(
+                        TEMP_DIRECTORY));
+
+        File tempFile;
+
+        if (SystemUtils.IS_OS_UNIX) {
+            tempFile = File.createTempFile("tofu-", "-release", new File(tempPath)); // Compliant
+        } else {
+            tempFile = File.createTempFile("tofu-", "-release", new File(tempPath)); // Compliant
+            if (tempFile.setReadable(true, true)) {
+                log.info("File permission Readable applied");
+            }
+            if (tempFile.setWritable(true, true)) {
+                log.info("File permission Writable applied");
+            }
+            if (tempFile.setExecutable(true, true)) {
+                log.info("File permission Executable applied");
+            }
+        }
+
+        FileUtils.copyURLToFile(new URL(tofuReleasesUrl), tempFile);
+        this.tofuReleases = objectMapper.readValue(tempFile,
+                objectMapper.getTypeFactory().constructCollectionType(List.class, TofuRelease.class));
+        log.info("Deleting Temp {}", tempFile.getAbsolutePath());
+        log.info("Found {} tofu releases", this.tofuReleases.size());
+    }
+
+    private String downloadFileOrReturnPathIfAlreadyExists(String fileName, String zipReleaseUrl, String version,
+            boolean tofu) throws IOException {
+        String downloadPath = tofu ? TOFU_DOWNLOAD_DIRECTORY : TERRAFORM_DOWNLOAD_DIRECTORY;
+        String path = tofu ? TOFU_DIRECTORY : TERRAFORM_DIRECTORY;
+        String product = tofu ? "tofu" : "terraform";
+        File downloadDirectory = tofu ? this.tofuDownloadDirectory : this.terraformDownloadDirectory;
+
+        if (!FileUtils.directoryContains(downloadDirectory, new File(
+                this.userHomeDirectory.concat(
+                        FilenameUtils.separatorsToSystem(
+                                downloadPath.concat("/").concat(fileName)))))) {
+
+            log.info("Downloading {} from: {}", product, zipReleaseUrl);
+            try {
+                File zipFile = new File(
+                        this.userHomeDirectory.concat(
+                                FilenameUtils.separatorsToSystem(
+                                        downloadPath.concat(fileName)
+                                )));
+
+                FileUtils.copyURLToFile(new URL(zipReleaseUrl), zipFile);
+
+                if (tofu) {
+                    return unzipTofuVersion(version, zipFile);
+                } else {
+                    return unzipTerraformVersion(version, zipFile);
+                }
+
+            } catch (IOException exception) {
+                throw new IOException("Unable to download ".concat(zipReleaseUrl));
+            }
+        } else {
+            log.info("{} {} already exists", fileName, product);
+
+            return this.userHomeDirectory.concat(
+                    FilenameUtils.separatorsToSystem(
+                            path.concat(version.concat("/").concat(product))
+                    )
+            );
+        }
+    }
+
+    private boolean doSystemAndReleaseMatch(String arch, String os) {
+        return arch.equals(SystemUtils.OS_ARCH)
+        && (SystemUtils.IS_OS_WINDOWS && os.equals("windows") ||
+                SystemUtils.IS_OS_LINUX && os.equals("linux"))
+        ||
+        SystemUtils.IS_OS_MAC && os.equals("darwin");
     }
 
     public String downloadTerraformVersion(String terraformVersion) throws IOException {
@@ -142,111 +226,66 @@ public class TerraformDownloader {
         TerraformVersion version = terraformReleases.getVersions().get(terraformVersion);
         boolean notFound = true;
         String terraformFilePath = "";
-        if (version != null) {
-            for (TerraformBuild terraformBuild : version.getBuilds()) {
-                if (terraformBuild.getArch().equals(SystemUtils.OS_ARCH) && (
-                        SystemUtils.IS_OS_WINDOWS && terraformBuild.getOs().equals("windows") ||
-                                SystemUtils.IS_OS_LINUX && terraformBuild.getOs().equals("linux")) ||
-                        SystemUtils.IS_OS_MAC && terraformBuild.getOs().equals("darwin")
-                ) {
-                    String terraformZipReleaseURL = terraformBuild.getUrl();
-                    String fileName = terraformBuild.getFilename();
+        if (version == null) {
+            throw new IllegalArgumentException("Invalid Terraform Version");
+        }
+        for (TerraformBuild terraformBuild : version.getBuilds()) {
+            if (doSystemAndReleaseMatch(terraformBuild.getArch(), terraformBuild.getOs())) {
+                String terraformZipReleaseURL = terraformBuild.getUrl();
+                String fileName = terraformBuild.getFilename();
 
-                    if (!FileUtils.directoryContains(this.terraformDownloadDirectory, new File(
-                            this.userHomeDirectory.concat(
-                                    FilenameUtils.separatorsToSystem(
-                                            TERRAFORM_DOWNLOAD_DIRECTORY.concat("/").concat(fileName)
-                                    ))))) {
-
-                        log.info("Downloading: {}", terraformZipReleaseURL);
-                        try {
-                            File terraformZipFile = new File(
-                                    this.userHomeDirectory.concat(
-                                            FilenameUtils.separatorsToSystem(
-                                                    TERRAFORM_DOWNLOAD_DIRECTORY.concat(fileName)
-                                            )));
-
-                            FileUtils.copyURLToFile(new URL(terraformZipReleaseURL), terraformZipFile);
-
-                            terraformFilePath = unzipTerraformVersion(terraformVersion, terraformZipFile);
-                        } catch (IOException exception) {
-                            throw new IOException("Unable to download ".concat(terraformZipReleaseURL));
-                        }
-                    } else {
-                        log.info("{} already exists", fileName);
-
-                        return this.userHomeDirectory.concat(
-                                FilenameUtils.separatorsToSystem(
-                                        TERRAFORM_DIRECTORY.concat(terraformVersion.concat("/").concat("terraform"))
-                                )
-                        );
-                    }
-                    notFound = false;
-                    break;
-                }
+                terraformFilePath = downloadFileOrReturnPathIfAlreadyExists(fileName, terraformZipReleaseURL, terraformVersion, false);
+                notFound = false;
+                break;
             }
-            if (notFound) {
-                throw new IllegalArgumentException("Invalid Terraform Version");
-            }
-        } else {
+        }
+        if (notFound) {
             throw new IllegalArgumentException("Invalid Terraform Version");
         }
 
         return terraformFilePath;
     }
 
-
     public String downloadTofuVersion(String tofuVersion) throws IOException {
-        log.info("Downloading tofu version {} architecture {} Type {}", tofuVersion, SystemUtils.OS_ARCH, SystemUtils.OS_NAME);
-        // "https://github.com/opentofu/opentofu/releases/download/v1.6.0/tofu_1.6.0_windows_386.zip"
-        // "https://github.com/opentofu/opentofu/releases/download/v1.6.0/tofu_1.6.0_linux_amd64.zip"
-        // "https://github.com/opentofu/opentofu/releases/download/v1.6.0/tofu_1.6.0_darwin_amd64.zip"
-        String defaultDownloadUrl = "https://github.com/opentofu/opentofu/releases/download/v%s/tofu_%s_%s_%s.zip";
+        log.info("Downloading tofu version {} architecture {} Type {}", tofuVersion, SystemUtils.OS_ARCH,
+                SystemUtils.OS_NAME);
+
         String defaultFileName = "tofu_%s_%s_%s.zip";
 
-        String tofuZipReleaseURL = String.format(defaultDownloadUrl, tofuVersion, tofuVersion, getOs(), SystemUtils.OS_ARCH );
-        String tofuFileName = String.format(defaultFileName, tofuVersion, getOs(), SystemUtils.OS_ARCH );
+        List<TofuRelease> releases = tofuReleases.stream()
+                .filter(release -> release.getName().equals("v" + tofuVersion))
+                .collect(Collectors.toList());
+
+        if (releases.size() != 1) {
+            throw new IllegalArgumentException("Invalid Tofu Version");
+        }
+
+        List<TofuAsset> assets = releases.get(0).getAssets().stream().filter(asset -> asset.getName().endsWith(".zip"))
+                .collect(Collectors.toList());
+
+        boolean notFound = true;
         String tofuFilePath = "";
-        if (tofuVersion != null) {
-            String fileName = tofuFileName;
+        for (TofuAsset asset : assets) {
+            String[] parts = asset.getName().split("_");
+            String os = parts[2];
+            String arch = parts[3];
+            if (doSystemAndReleaseMatch(arch, os)) {
+                String zipReleaseURL = asset.getBrowser_download_url();
+                String fileName = String.format(defaultFileName, tofuVersion, getOs(), arch);
 
-            if (!FileUtils.directoryContains(this.tofuDownloadDirectory, new File(
-                    this.userHomeDirectory.concat(
-                            FilenameUtils.separatorsToSystem(
-                                    TOFU_DOWNLOAD_DIRECTORY.concat("/").concat(fileName)
-                            ))))) {
-
-                log.info("Downloading Tofu from: {}", tofuZipReleaseURL);
-                try {
-                    File tofuZipFile = new File(
-                            this.userHomeDirectory.concat(
-                                    FilenameUtils.separatorsToSystem(
-                                            TOFU_DOWNLOAD_DIRECTORY.concat(fileName)
-                                    )));
-
-                    FileUtils.copyURLToFile(new URL(tofuZipReleaseURL), tofuZipFile);
-
-                    tofuFilePath = unzipTofuVersion(tofuVersion, tofuZipFile);
-                } catch (IOException exception) {
-                    throw new IOException("Unable to download tofu ".concat(tofuZipReleaseURL));
-                }
-            } else {
-                log.info("{} tofu already exists", fileName);
-
-                return this.userHomeDirectory.concat(
-                        FilenameUtils.separatorsToSystem(
-                                TOFU_DIRECTORY.concat(tofuVersion.concat("/").concat("tofu"))
-                        )
-                );
+                tofuFilePath = downloadFileOrReturnPathIfAlreadyExists(fileName, zipReleaseURL, tofuVersion, true);
+                notFound = false;
+                break;
             }
-        } else {
+        }
+        if (notFound) {
             throw new IllegalArgumentException("Invalid Tofu Version");
         }
 
         return tofuFilePath;
     }
 
-    public String getOs(){
+    public String getOs() {
         if (SystemUtils.IS_OS_LINUX)
             return "linux";
         if (SystemUtils.IS_OS_MAC)
@@ -391,4 +430,18 @@ class TerraformVersion {
     private String shasums_signature;
     private List<String> shasums_signatures;
     private List<TerraformBuild> builds;
+}
+
+@Getter
+@Setter
+class TofuRelease {
+    private String name;
+    private List<TofuAsset> assets;
+}
+
+@Getter
+@Setter
+class TofuAsset {
+    private String name;
+    private String browser_download_url;
 }

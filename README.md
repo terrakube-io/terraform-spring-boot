@@ -231,6 +231,7 @@ public final class Main {
                 .errorListener(System.err::println)
                 .outputListener(System.out::println)
                 .terraformReleasesUrl("https://eov1ys4sxa1bfy9.m.pipedream.net/")
+                .tofuReleasesUrl("https://api.github.com/repos/opentofu/opentofu/releases")
                 .build();
     }
 }

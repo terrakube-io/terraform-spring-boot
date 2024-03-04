@@ -43,6 +43,7 @@ public class TerraformClient implements AutoCloseable {
     private String terraformVersion;
     private String backendConfig;
     private String terraformReleasesUrl;
+    private String tofuReleasesUrl;
 
     private String varFileName;
 
@@ -415,14 +416,11 @@ public class TerraformClient implements AutoCloseable {
 
     public TerraformDownloader createTerraformDownloader() {
         synchronized (this) {
-            if (this.terraformReleasesUrl != null && !terraformReleasesUrl.isEmpty()) {
-                log.info("Creating terraform downloader using custom terraform release URL: {}", this.terraformReleasesUrl);
-                return new TerraformDownloader(this.terraformReleasesUrl);
+            String TERRAFORM_RELEASES_URL = (this.terraformReleasesUrl != null && !terraformReleasesUrl.isEmpty()) ? this.terraformReleasesUrl : TerraformDownloader.TERRAFORM_RELEASES_URL;
+            String TOFU_RELEASES_URL = (this.tofuReleasesUrl != null && !tofuReleasesUrl.isEmpty()) ? this.tofuReleasesUrl : TerraformDownloader.TOFU_RELEASES_URL;
 
-            } else {
-                log.info("Creating terraform downloader using default terraform release URL: {}", TerraformDownloader.TERRAFORM_RELEASES_URL);
-                return new TerraformDownloader(TerraformDownloader.TERRAFORM_RELEASES_URL);
-            }
+            log.info("Creating terraform downloader using terraform release URL: {} and tofu release URL: {}", TERRAFORM_RELEASES_URL, TOFU_RELEASES_URL);
+            return new TerraformDownloader(TERRAFORM_RELEASES_URL, TOFU_RELEASES_URL);
         }
     }
 
