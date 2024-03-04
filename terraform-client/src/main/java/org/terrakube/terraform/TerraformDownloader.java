@@ -268,11 +268,10 @@ public class TerraformDownloader {
         for (TofuAsset asset : assets) {
             String[] parts = asset.getName().split("_");
             String os = parts[2];
-            String arch = parts[3];
+            String arch = parts[3].replace(".zip",""); // we need to remove .zip from the asset name example: tofu_1.6.2_linux_amd64.zip
             if (doSystemAndReleaseMatch(arch, os)) {
                 String zipReleaseURL = asset.getBrowser_download_url();
                 String fileName = String.format(defaultFileName, tofuVersion, getOs(), arch);
-
                 tofuFilePath = downloadFileOrReturnPathIfAlreadyExists(fileName, zipReleaseURL, tofuVersion, true);
                 notFound = false;
                 break;
