@@ -1,12 +1,13 @@
 package org.terrakube.terraform.spring.autoconfigure;
 
 import lombok.NonNull;
+import org.springframework.boot.autoconfigure.AutoConfiguration;
 import org.springframework.boot.autoconfigure.condition.*;
 import org.springframework.boot.context.properties.*;
 import org.springframework.context.annotation.*;
 import org.terrakube.terraform.TerraformClient;
 
-@Configuration
+@AutoConfiguration
 @EnableConfigurationProperties(TerraformProperties.class)
 @ConditionalOnMissingBean(TerraformClient.class)
 public class TerraformAutoConfiguration {
