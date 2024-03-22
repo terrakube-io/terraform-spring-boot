@@ -12,5 +12,5 @@ public class SpringStarterSampleApp {
     }
 
     @Autowired
-    private TerraformClient terraform;
+    private TerraformClient terrterraform;
 }
