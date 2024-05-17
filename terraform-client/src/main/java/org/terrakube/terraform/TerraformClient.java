@@ -145,6 +145,14 @@ public class TerraformClient implements AutoCloseable {
                 TerraformCommand.planDestroy);
     }
 
+    public CompletableFuture<Integer> planDestroyDetailExitCode(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+        terraformProcessData.setDetailExitCode(true);
+        return this.getTerraformLauncher(
+                terraformProcessData,
+                outputListener,
+                errorListener, TerraformCommand.planDestroy).launch();
+    }
+
     public CompletableFuture<Boolean> plan() throws IOException {
         this.checkRunningParameters();
         return this.run(TerraformCommand.plan);
