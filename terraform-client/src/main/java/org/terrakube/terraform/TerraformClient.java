@@ -30,6 +30,7 @@ public class TerraformClient implements AutoCloseable {
     private static final String TERRAFORM_PARAM_PLAN_DESTROY = "-destroy";
     private static final String TERRAFORM_PARAM_OUTPUT_PLAN_FILE = "terraformLibrary.tfPlan";
     private static final String TERRAFORM_PARAM_DISABLE_USER_INPUT = "-input=false";
+    private static final String TERRAFORM_PARAM_DETAIL_EXIT_CODE ="-detailed-exitcode";
     private static final String TERRAFORM_PLAN_REFRESH_FALSE="-refresh=false";
     private static final String TERRAFORM_PLAN_REFRESH_ONLY="-refresh-only";
     private static final String TF_STATE_PULL="pull";
@@ -120,6 +121,14 @@ public class TerraformClient implements AutoCloseable {
                 TerraformCommand.plan);
     }
 
+    public CompletableFuture<Integer> planDetailExitCode(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+        terraformProcessData.setDetailExitCode(true);
+        return this.getTerraformLauncher(
+                terraformProcessData,
+                outputListener,
+                errorListener, TerraformCommand.plan).launch();
+    }
+
     public CompletableFuture<Boolean> statePull(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformProcessData,
@@ -134,6 +143,14 @@ public class TerraformClient implements AutoCloseable {
                 outputListener,
                 errorListener,
                 TerraformCommand.planDestroy);
+    }
+
+    public CompletableFuture<Integer> planDestroyDetailExitCode(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+        terraformProcessData.setDetailExitCode(true);
+        return this.getTerraformLauncher(
+                terraformProcessData,
+                outputListener,
+                errorListener, TerraformCommand.planDestroy).launch();
     }
 
     public CompletableFuture<Boolean> plan() throws IOException {
@@ -327,6 +344,10 @@ public class TerraformClient implements AutoCloseable {
 
                 if (command.equals(TerraformCommand.planDestroy)) {
                     launcher.appendCommands(TERRAFORM_PARAM_PLAN_DESTROY);
+                }
+
+                if (terraformProcessData.isDetailExitCode()) {
+                    launcher.appendCommands(TERRAFORM_PARAM_DETAIL_EXIT_CODE);
                 }
                 break;
             case apply:

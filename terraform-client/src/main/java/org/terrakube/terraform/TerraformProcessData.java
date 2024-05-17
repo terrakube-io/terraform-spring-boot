@@ -21,6 +21,8 @@ public class TerraformProcessData {
     boolean refreshOnly = false;
     @Builder.Default
     boolean tofu = false;
+    @Builder.Default
+    boolean detailExitCode = false;
     @Singular Map<String, String> terraformVariables;
     @Singular Map<String, String> terraformEnvironmentVariables;
 }

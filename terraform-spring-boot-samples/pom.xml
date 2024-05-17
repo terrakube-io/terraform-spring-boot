@@ -5,7 +5,7 @@
     <parent>
             <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.0.13</version>
+        <version>3.1.10</version>
     </parent>
 
     <groupId>org.terrakube.terraform</groupId>
@@ -18,7 +18,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <revision>0.14.0-beta.2</revision>
+        <revision>0.15.0</revision>
         <maven.deploy.skip>true</maven.deploy.skip>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
