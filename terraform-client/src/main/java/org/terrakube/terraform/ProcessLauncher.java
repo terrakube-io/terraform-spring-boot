@@ -39,6 +39,11 @@ public final class ProcessLauncher {
         assert this.process == null;
         this.builder.directory(directory);
     }
+    
+    void setRedirectErrorStream(boolean redirectErrorStream) {
+        assert this.process == null;
+        this.builder.redirectErrorStream(redirectErrorStream);
+    }
 
     void appendCommands(String... commands) {
         Stream<String> filteredCommands = Arrays.stream(commands).filter(c -> c != null && c.length() > 0);

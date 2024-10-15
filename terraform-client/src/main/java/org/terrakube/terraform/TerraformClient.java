@@ -41,6 +41,7 @@ public class TerraformClient implements AutoCloseable {
     private boolean inheritIO;
     private boolean showColor;
     private boolean jsonOutput;
+    private boolean redirectErrorStream;
     private String terraformVersion;
     private String backendConfig;
     private String terraformReleasesUrl;
@@ -68,7 +69,7 @@ public class TerraformClient implements AutoCloseable {
         return launcher.launch().thenApply((c) -> c == 0 ? version.toString() : null);
     }
 
-    public CompletableFuture<Boolean> show(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> show(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
         return this.run(
@@ -83,7 +84,7 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.show);
     }
 
-    public CompletableFuture<Boolean> showPlan(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> showPlan(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
         return this.run(
@@ -98,7 +99,7 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.showPlan);
     }
 
-    public CompletableFuture<Boolean> init(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> init(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
         return this.run(
@@ -113,7 +114,7 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.init);
     }
 
-    public CompletableFuture<Boolean> plan(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> plan(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -121,7 +122,7 @@ public class TerraformClient implements AutoCloseable {
                 TerraformCommand.plan);
     }
 
-    public CompletableFuture<Integer> planDetailExitCode(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Integer> planDetailExitCode(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         terraformProcessData.setDetailExitCode(true);
         return this.getTerraformLauncher(
                 terraformProcessData,
@@ -129,7 +130,7 @@ public class TerraformClient implements AutoCloseable {
                 errorListener, TerraformCommand.plan).launch();
     }
 
-    public CompletableFuture<Boolean> statePull(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> statePull(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -137,7 +138,7 @@ public class TerraformClient implements AutoCloseable {
                 TerraformCommand.statePull);
     }
 
-    public CompletableFuture<Boolean> planDestroy(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> planDestroy(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -145,7 +146,7 @@ public class TerraformClient implements AutoCloseable {
                 TerraformCommand.planDestroy);
     }
 
-    public CompletableFuture<Integer> planDestroyDetailExitCode(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Integer> planDestroyDetailExitCode(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         terraformProcessData.setDetailExitCode(true);
         return this.getTerraformLauncher(
                 terraformProcessData,
@@ -158,7 +159,7 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.plan);
     }
 
-    public CompletableFuture<Boolean> apply(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> apply(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -171,7 +172,7 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.apply);
     }
 
-    public CompletableFuture<Boolean> destroy(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> destroy(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         checkBackendConfigFile(terraformProcessData);
         return this.run(
                 terraformProcessData,
@@ -185,7 +186,7 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.destroy);
     }
 
-    public CompletableFuture<Boolean> output(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, @NonNull Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> output(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         checkBackendConfigFile(terraformProcessData);
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
@@ -405,6 +406,7 @@ public class TerraformClient implements AutoCloseable {
 
         launcher.setOutputListener(outputListener);
         launcher.setErrorListener(errorListener);
+        launcher.setRedirectErrorStream(this.redirectErrorStream);
         return launcher;
     }
 
