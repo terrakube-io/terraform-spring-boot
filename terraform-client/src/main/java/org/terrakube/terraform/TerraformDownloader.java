@@ -214,11 +214,7 @@ public class TerraformDownloader {
     }
 
     private boolean doSystemAndReleaseMatch(String arch, String os) {
-        return arch.equals(SystemUtils.OS_ARCH)
-        && (SystemUtils.IS_OS_WINDOWS && os.equals("windows") ||
-                SystemUtils.IS_OS_LINUX && os.equals("linux"))
-        ||
-        SystemUtils.IS_OS_MAC && os.equals("darwin");
+        return arch.equals(this.getArch()) && os.equals(this.getOs());
     }
 
     public String downloadTerraformVersion(String terraformVersion) throws IOException {
@@ -292,6 +288,16 @@ public class TerraformDownloader {
         if (SystemUtils.IS_OS_WINDOWS)
             return "windows";
         return "linux";
+    }
+
+    private String getArch() {
+        if (SystemUtils.OS_ARCH == null) {
+            throw new IllegalArgumentException("System architecture not detected");
+        }
+        if (SystemUtils.OS_ARCH.equals("aarch64")) {
+            return "arm64";
+        }
+        return SystemUtils.OS_ARCH;
     }
 
     private String unzipTerraformVersion(String terraformVersion, File terraformZipFile) throws IOException {
