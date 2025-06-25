@@ -11,7 +11,11 @@
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+<<<<<<< HEAD
     <revision>1.0.0</revision>
+=======
+    <revision>0.17.0</revision>
+>>>>>>> master
     <sonar.organization>azbuilder</sonar.organization>
     <sonar.host.url>https://sonarcloud.io</sonar.host.url>
     <maven.deploy.skip>true</maven.deploy.skip>
