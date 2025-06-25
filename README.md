@@ -90,7 +90,7 @@ Let's still use the terraform file `storage.tf` under `/some/local/path/` folder
 
 ```xml
 <dependency>
-    <groupId>org.terrakube.terraform</groupId>
+    <groupId>io.terrakube.terraform</groupId>
     <artifactId>terraform-spring-boot-starter</artifactId>
     <version>0.9.0</version>
 </dependency>
@@ -99,13 +99,13 @@ Let's still use the terraform file `storage.tf` under `/some/local/path/` folder
 You can also enable or disable terraform output colors using the `application.properties` or `application-${spring.profiles.active}.properties`:
 
 ```
-org.terrakube.terraform.flags.enableColor=true
+io.terrakube.terraform.flags.enableColor=true
 ```
 
 You can also enable or disable terraform output in json format using the `application.properties` or `application-${spring.profiles.active}.properties`:
 
 ```
-org.terrakube.terraform.flags.jsonOutput=true
+io.terrakube.terraform.flags.jsonOutput=true
 ```
 
 > This feature is only supported in terraform >= 0.15.3
@@ -210,7 +210,7 @@ You can customize the URL from where you download your terraform binary.
 Use terraform releases url field in the builder:
 
 ```java
-package org.terrakube.terraform;
+package io.terrakube.terraform;
 
 import java.io.File;
 import java.io.IOException;
