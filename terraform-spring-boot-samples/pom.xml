@@ -8,7 +8,7 @@
         <version>3.5.0</version>
     </parent>
 
-    <groupId>org.terrakube.terraform</groupId>
+    <groupId>io.terrakube.terraform</groupId>
     <artifactId>terraform-samples</artifactId>
     <version>${revision}</version>
     <packaging>pom</packaging>
@@ -18,7 +18,7 @@
 
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <revision>0.17.0</revision>
+        <revision>1.0.0</revision>
         <maven.deploy.skip>true</maven.deploy.skip>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>

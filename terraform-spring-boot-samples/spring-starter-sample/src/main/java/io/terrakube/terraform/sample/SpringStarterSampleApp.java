@@ -1,6 +1,6 @@
-package org.terrakube.terraform.sample;
+package io.terrakube.terraform.sample;
 
-import org.terrakube.terraform.TerraformClient;
+import io.terrakube.terraform.TerraformClient;
 import org.springframework.beans.factory.annotation.*;
 import org.springframework.boot.*;
 import org.springframework.boot.autoconfigure.*;

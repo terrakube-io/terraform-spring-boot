@@ -7,7 +7,7 @@
     <version>3.5.0</version>
   </parent>
 
-  <groupId>org.terrakube.terraform</groupId>
+  <groupId>io.terrakube.terraform</groupId>
   <artifactId>terraform-spring-boot-autoconfigure</artifactId>
   <version>${revision}</version>
   <packaging>jar</packaging>
@@ -22,7 +22,7 @@
     <maven-source-plugin.version>3.3.0</maven-source-plugin.version>
     <maven-javadoc-plugin.version>3.6.2</maven-javadoc-plugin.version>
     <maven-gpg-plugin.version>3.1.0</maven-gpg-plugin.version>
-    <revision>0.17.0</revision>
+    <revision>1.0.0</revision>
     <maven.deploy.skip>false</maven.deploy.skip>
     <lombok.version>1.18.30</lombok.version>
     <maven.compiler.source>11</maven.compiler.source>
@@ -39,7 +39,7 @@
 
   <organization>
     <name>Terrakube</name>
-    <url>https://terrakube.org/</url>
+    <url>https://docs.terrakube.io/</url>
   </organization>
 
   <developers>
@@ -158,7 +158,7 @@
     </dependency>
 
     <dependency>
-      <groupId>org.terrakube.terraform</groupId>
+      <groupId>io.terrakube.terraform</groupId>
       <artifactId>terraform-client</artifactId>
       <version>${revision}</version>
     </dependency>

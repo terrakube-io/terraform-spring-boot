@@ -1,4 +1,4 @@
-package org.terrakube.terraform;
+package io.terrakube.terraform;
 
 import java.io.*;
 import java.util.*;
