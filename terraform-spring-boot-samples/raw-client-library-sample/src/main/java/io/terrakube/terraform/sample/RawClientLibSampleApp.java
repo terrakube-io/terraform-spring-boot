@@ -1,10 +1,10 @@
-package org.terrakube.terraform.sample;
+package io.terrakube.terraform.sample;
 
 import java.io.*;
 import java.util.*;
 
-import org.terrakube.terraform.TerraformClient;
-import org.terrakube.terraform.TerraformDownloader;
+import io.terrakube.terraform.TerraformClient;
+import io.terrakube.terraform.TerraformDownloader;
 
 public final class RawClientLibSampleApp {
     public static void main(String[] args) throws Exception {

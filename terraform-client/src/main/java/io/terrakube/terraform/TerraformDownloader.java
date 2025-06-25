@@ -1,4 +1,4 @@
-package org.terrakube.terraform;
+package io.terrakube.terraform;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;

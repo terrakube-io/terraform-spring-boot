@@ -25,9 +25,9 @@ Simply add the following dependency to your project's `pom.xml` will enable you 
 
 ```xml
 <dependency>
-    <groupId>org.terrakube.terraform</groupId>
+    <groupId>io.terrakube.terraform</groupId>
     <artifactId>terraform-client</artifactId>
-    <version>0.10.1</version>
+    <version>1.0.0</version>
 </dependency>
 ```
 
