@@ -20,11 +20,7 @@
     <properties>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <maven.deploy.skip>true</maven.deploy.skip>
-<<<<<<< HEAD
         <revision>1.0.0</revision>
-=======
-        <revision>0.17.0</revision>
->>>>>>> master
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
     </properties>

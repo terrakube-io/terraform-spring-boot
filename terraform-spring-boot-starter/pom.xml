@@ -17,11 +17,7 @@
     <maven-source-plugin.version>3.3.0</maven-source-plugin.version>
     <maven-javadoc-plugin.version>3.6.2</maven-javadoc-plugin.version>
     <maven-gpg-plugin.version>3.1.0</maven-gpg-plugin.version>
-<<<<<<< HEAD
     <revision>1.0.0</revision>
-=======
-    <revision>0.17.0</revision>
->>>>>>> master
     <maven.deploy.skip>false</maven.deploy.skip>
     <maven.compiler.source>11</maven.compiler.source>
     <maven.compiler.target>11</maven.compiler.target>
