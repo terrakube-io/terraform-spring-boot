@@ -1,6 +1,7 @@
 package io.terrakube.terraform;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
 import lombok.Setter;
@@ -8,9 +9,21 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.SystemUtils;
+import org.reactivestreams.Publisher;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
+import org.springframework.web.reactive.function.client.ExchangeStrategies;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+import reactor.netty.http.client.HttpClient;
 
-import java.io.*;
-import java.net.URL;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -106,73 +119,64 @@ public class TerraformDownloader {
 
     private void getTerraformReleases(String terraformReleasesUrl) throws IOException {
         log.info("Downloading terraform releases list");
+        try {
+            WebClient webClient = WebClient.builder()
+                    .exchangeStrategies(ExchangeStrategies.builder()
+                            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+                            .build())
+                    .baseUrl(terraformReleasesUrl)
+                    .clientConnector(
+                            new ReactorClientHttpConnector(
+                                    HttpClient.create().proxyWithSystemProperties())
+                    )
+                    .build();
 
-        ObjectMapper objectMapper = new ObjectMapper();
+            this.terraformReleases = webClient.get()
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .bodyToMono(TerraformResponse.class)
+                    .block();
 
-        String tempPath = userHomeDirectory.concat(
-                FilenameUtils.separatorsToSystem(
-                        TEMP_DIRECTORY
-                ));
-
-        File tempFile;
-
-        if (SystemUtils.IS_OS_UNIX) {
-            tempFile = File.createTempFile("terraform-", "-release", new File(tempPath)); // Compliant
-        } else {
-            tempFile = File.createTempFile("terraform-", "-release", new File(tempPath)); // Compliant
-            if (tempFile.setReadable(true, true)) {
-                log.info("File permission Readable applied");
-            }
-            if (tempFile.setWritable(true, true)) {
-                log.info("File permission Writable applied");
-            }
-            if (tempFile.setExecutable(true, true)) {
-                log.info("File permission Executable applied");
-            }
+        } catch (Exception e) {
+            log.error("Error fetching terraform releases {}", e.getMessage());
         }
 
-        FileUtils.copyURLToFile(new URL(terraformReleasesUrl), tempFile);
-        this.terraformReleases = objectMapper.readValue(tempFile, TerraformResponse.class);
-        log.info("Deleting Temp {}", tempFile.getAbsolutePath());
+        assert this.terraformReleases != null;
         log.info("Found {} terraform releases", this.terraformReleases.getVersions().size());
     }
 
     private void getTofuReleases(String tofuReleasesUrl) throws IOException {
         log.info("Downloading tofu releases list");
+        String tofuTemp = "";
+        try {
+            WebClient webClient = WebClient.builder()
+                    .exchangeStrategies(ExchangeStrategies.builder()
+                            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+                            .build())
+                    .baseUrl(tofuReleasesUrl)
+                    .clientConnector(
+                            new ReactorClientHttpConnector(
+                                    HttpClient.create().proxyWithSystemProperties())
+                    )
+                    .build();
 
-        ObjectMapper objectMapper = new ObjectMapper();
-        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+            tofuTemp = webClient.get()
+                    .accept(MediaType.APPLICATION_JSON)
+                    .retrieve()
+                    .bodyToMono(String.class)
+                    .block();
+                    ObjectMapper objectMapper = new ObjectMapper();
 
-        String tempPath = userHomeDirectory.concat(
-                FilenameUtils.separatorsToSystem(
-                        TEMP_DIRECTORY));
-
-        File tempFile;
-
-        if (SystemUtils.IS_OS_UNIX) {
-            tempFile = File.createTempFile("tofu-", "-release", new File(tempPath)); // Compliant
-        } else {
-            tempFile = File.createTempFile("tofu-", "-release", new File(tempPath)); // Compliant
-            if (tempFile.setReadable(true, true)) {
-                log.info("File permission Readable applied");
-            }
-            if (tempFile.setWritable(true, true)) {
-                log.info("File permission Writable applied");
-            }
-            if (tempFile.setExecutable(true, true)) {
-                log.info("File permission Executable applied");
-            }
+            this.tofuReleases = objectMapper.readValue(tofuTemp,
+                    objectMapper.getTypeFactory().constructCollectionType(List.class, TofuRelease.class));
+        } catch (Exception e) {
+            log.error("Error fetching terraform releases {}", e.getMessage());
         }
-
-        FileUtils.copyURLToFile(new URL(tofuReleasesUrl), tempFile);
-        this.tofuReleases = objectMapper.readValue(tempFile,
-                objectMapper.getTypeFactory().constructCollectionType(List.class, TofuRelease.class));
-        log.info("Deleting Temp {}", tempFile.getAbsolutePath());
         log.info("Found {} tofu releases", this.tofuReleases.size());
     }
 
     private String downloadFileOrReturnPathIfAlreadyExists(String fileName, String zipReleaseUrl, String version,
-            boolean tofu) throws IOException {
+                                                           boolean tofu) throws IOException {
         String downloadPath = tofu ? TOFU_DOWNLOAD_DIRECTORY : TERRAFORM_DOWNLOAD_DIRECTORY;
         String path = tofu ? TOFU_DIRECTORY : TERRAFORM_DIRECTORY;
         String product = tofu ? "tofu" : "terraform";
@@ -191,7 +195,31 @@ public class TerraformDownloader {
                                         downloadPath.concat(fileName)
                                 )));
 
-                FileUtils.copyURLToFile(new URL(zipReleaseUrl), zipFile);
+                WebClient webClient = WebClient.builder()
+                        .clientConnector(new ReactorClientHttpConnector(
+                                HttpClient.create()
+                                        .followRedirect(true)
+                                        .proxyWithSystemProperties()
+                        ))
+                        .defaultHeaders(h -> {
+                            h.add("User-Agent", "terraform-downloader");
+                            h.setAccept(List.of(MediaType.APPLICATION_OCTET_STREAM, MediaType.ALL));
+                        })
+                        .build();
+
+                Path filePath = zipFile.toPath();
+
+                webClient.get()
+                        .uri(zipReleaseUrl)
+                        .retrieve()
+                        .onStatus(
+                                status -> !status.is2xxSuccessful(),
+                                clientResponse -> clientResponse.createException().flatMap(Mono::error)
+                        )
+                        .bodyToFlux(DataBuffer.class)
+                        .as(dataBufferFlux -> DataBufferUtils.write(dataBufferFlux, filePath))
+                        .then()
+                        .block();
 
                 if (tofu) {
                     return unzipTofuVersion(version, zipFile);
@@ -212,6 +240,7 @@ public class TerraformDownloader {
             );
         }
     }
+
 
     private boolean doSystemAndReleaseMatch(String arch, String os) {
         return arch.equals(this.getArch()) && os.equals(this.getOs());
@@ -264,7 +293,7 @@ public class TerraformDownloader {
         for (TofuAsset asset : assets) {
             String[] parts = asset.getName().split("_");
             String os = parts[2];
-            String arch = parts[3].replace(".zip",""); // we need to remove .zip from the asset name example: tofu_1.6.2_linux_amd64.zip
+            String arch = parts[3].replace(".zip", ""); // we need to remove .zip from the asset name example: tofu_1.6.2_linux_amd64.zip
             if (doSystemAndReleaseMatch(arch, os)) {
                 String zipReleaseURL = asset.getBrowser_download_url();
                 String fileName = String.format(defaultFileName, tofuVersion, getOs(), arch);
@@ -439,6 +468,7 @@ class TerraformVersion {
 
 @Getter
 @Setter
+@JsonIgnoreProperties(ignoreUnknown = true)
 class TofuRelease {
     private String name;
     private List<TofuAsset> assets;
@@ -446,6 +476,7 @@ class TofuRelease {
 
 @Getter
 @Setter
+@JsonIgnoreProperties(ignoreUnknown = true)
 class TofuAsset {
     private String name;
     private String browser_download_url;
