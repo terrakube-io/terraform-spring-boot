@@ -182,30 +182,18 @@ public class TerraformDownloader {
         String product = tofu ? "tofu" : "terraform";
         File downloadDirectory = tofu ? this.tofuDownloadDirectory : this.terraformDownloadDirectory;
 
-        File targetFile = new File(
+        if (!FileUtils.directoryContains(downloadDirectory, new File(
                 this.userHomeDirectory.concat(
-                        FilenameUtils.separatorsToSystem(downloadPath.concat("/").concat(fileName))
-                )
-        );
+                        FilenameUtils.separatorsToSystem(
+                                downloadPath.concat("/").concat(fileName)))))) {
 
-        File expectedBinary = new File(
-                this.userHomeDirectory.concat(
-                        FilenameUtils.separatorsToSystem(path.concat(version.concat("/").concat(product)))
-                )
-        );
-        if (expectedBinary.exists()) {
-            log.info("{} {} already exists at {}", product, version, expectedBinary.getAbsolutePath());
-            return expectedBinary.getAbsolutePath();
-        }
-
-        boolean hasZip = targetFile.exists();
-
-        if (!hasZip) {
             log.info("Downloading {} from: {}", product, zipReleaseUrl);
-
             try {
-                // Ensure the download directory exists
-                FileUtils.forceMkdir(downloadDirectory);
+                File zipFile = new File(
+                        this.userHomeDirectory.concat(
+                                FilenameUtils.separatorsToSystem(
+                                        downloadPath.concat(fileName)
+                                )));
 
                 WebClient webClient = WebClient.builder()
                         .clientConnector(new ReactorClientHttpConnector(
@@ -219,7 +207,7 @@ public class TerraformDownloader {
                         })
                         .build();
 
-                Path filePath = targetFile.toPath();
+                Path filePath = zipFile.toPath();
 
                 webClient.get()
                         .uri(zipReleaseUrl)
@@ -233,19 +221,23 @@ public class TerraformDownloader {
                         .then()
                         .block();
 
-                log.info("Downloaded {} to {}", product, filePath);
-            } catch (Exception e) {
-                log.error("Error downloading {} file: {}", product, e.getMessage());
-                throw new IOException("Unable to download ".concat(zipReleaseUrl), e);
+                if (tofu) {
+                    return unzipTofuVersion(version, zipFile);
+                } else {
+                    return unzipTerraformVersion(version, zipFile);
+                }
+
+            } catch (IOException exception) {
+                throw new IOException("Unable to download ".concat(zipReleaseUrl));
             }
         } else {
-            log.info("Zip already present: {}", targetFile.getAbsolutePath());
-        }
+            log.info("{} {} already exists", fileName, product);
 
-        if (tofu) {
-            return unzipTofuVersion(version, targetFile);
-        } else {
-            return unzipTerraformVersion(version, targetFile);
+            return this.userHomeDirectory.concat(
+                    FilenameUtils.separatorsToSystem(
+                            path.concat(version.concat("/").concat(product))
+                    )
+            );
         }
     }
 
