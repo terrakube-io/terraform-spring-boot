@@ -27,7 +27,7 @@
         <maven.deploy.skip>false</maven.deploy.skip>
         <commons-io.version>2.15.0</commons-io.version>
         <maven-artifact.version>3.9.5</maven-artifact.version>
-        <lombok.version>1.18.30</lombok.version>
+        <lombok.version>1.18.40</lombok.version>
         <maven.compiler.source>11</maven.compiler.source>
         <maven.compiler.target>11</maven.compiler.target>
     </properties>
