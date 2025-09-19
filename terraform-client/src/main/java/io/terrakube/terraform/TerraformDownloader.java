@@ -1,7 +1,6 @@
 package io.terrakube.terraform;
 
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
-import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.Getter;
 import lombok.Setter;
@@ -9,7 +8,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.FilenameUtils;
 import org.apache.commons.lang3.SystemUtils;
-import org.reactivestreams.Publisher;
+import java.lang.module.ModuleDescriptor.Version;
+
+import org.semver4j.Semver;
+import org.semver4j.range.RangeList;
+import org.semver4j.range.RangeListFactory;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.MediaType;
@@ -23,9 +26,12 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.lang.module.ModuleDescriptor;
 import java.nio.file.Path;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -38,7 +44,6 @@ public class TerraformDownloader {
     private static final String TERRAFORM_DIRECTORY = "/.terraform-spring-boot/terraform/";
 
     private static final String TOFU_DIRECTORY = "/.terraform-spring-boot/tofu/";
-    private static final String TEMP_DIRECTORY = "/.terraform-spring-boot/";
     public static final String TERRAFORM_RELEASES_URL = "https://releases.hashicorp.com/terraform/index.json";
     public static final String TOFU_RELEASES_URL = "https://api.github.com/repos/opentofu/opentofu/releases";
 
@@ -247,7 +252,27 @@ public class TerraformDownloader {
     }
 
     public String downloadTerraformVersion(String terraformVersion) throws IOException {
-        log.info("Downloading terraform version {} architecture {} Type {}", terraformVersion, SystemUtils.OS_ARCH, SystemUtils.OS_NAME);
+        log.info("Downloading terraform version \" {} \" architecture {} Type {}", terraformVersion, SystemUtils.OS_ARCH, SystemUtils.OS_NAME);
+        try {
+            RangeList versionRangeList = RangeListFactory.create(terraformVersion);
+
+            Set<String> allTerraformKeys = terraformReleases.getVersions().keySet();
+            terraformVersion = allTerraformKeys.stream()
+                    .filter(v -> {
+                        try {
+                            Semver tempVersion = new Semver(v);
+                            return tempVersion.satisfies(versionRangeList);
+                        } catch (IllegalArgumentException e) {
+                            return false;
+                        }
+                    })
+                    .max(Comparator.comparing(Version::parse))
+                    .orElseThrow(() -> new IllegalArgumentException("Not valid version format"));
+        } catch (Exception e) {
+            log.error("Error parsing Terraform version range: {}", e.getMessage());
+            throw new IllegalArgumentException("Invalid Terraform version range");
+        }
+        log.info("Terraform version is \" {} \"", terraformVersion);
         TerraformVersion version = terraformReleases.getVersions().get(terraformVersion);
         boolean notFound = true;
         String terraformFilePath = "";
