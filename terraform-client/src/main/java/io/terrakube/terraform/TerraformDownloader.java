@@ -26,7 +26,6 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
-import java.lang.module.ModuleDescriptor;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -127,7 +126,7 @@ public class TerraformDownloader {
         try {
             WebClient webClient = WebClient.builder()
                     .exchangeStrategies(ExchangeStrategies.builder()
-                            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+                            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(4 * 1024 * 1024))
                             .build())
                     .baseUrl(terraformReleasesUrl)
                     .clientConnector(
@@ -156,7 +155,7 @@ public class TerraformDownloader {
         try {
             WebClient webClient = WebClient.builder()
                     .exchangeStrategies(ExchangeStrategies.builder()
-                            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
+                            .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize(15 * 1024 * 1024))
                             .build())
                     .baseUrl(tofuReleasesUrl)
                     .clientConnector(
