@@ -127,7 +127,6 @@ public class TerraformDownloader {
             String tmpdir = Files.createDirectories(path).toFile().getAbsolutePath() + "/terraform-releases.json";
             log.info("Downloading terraform releases to {}", tmpdir);
             File terraformReleasesFile = new File(tmpdir);
-
             downloadReleasesToFile(terraformReleasesUrl, terraformReleasesFile);
             log.info("Downloaded terraform releases completed");
             this.terraformReleases = objectMapper.readValue(FileUtils.readFileToString(new File(tmpdir), "UTF-8"), TerraformResponse.class);
