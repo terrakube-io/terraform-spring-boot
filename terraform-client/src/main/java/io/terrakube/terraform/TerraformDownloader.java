@@ -313,16 +313,42 @@ public class TerraformDownloader {
 
         String defaultFileName = "tofu_%s_%s_%s.zip";
 
+        //Extracting only the relase name, for example: 1.8.0
+        Set<String> allTofuKeys = tofuReleases.stream().map(TofuRelease::getName).collect(Collectors.toSet());
+        log.info("All tofu releases: {}", allTofuKeys);
+
+        try {
+            RangeList versionRangeList = RangeListFactory.create(tofuVersion);
+
+            //Filter tofu releases based on the version range
+            tofuVersion = allTofuKeys.stream()
+                    .filter(v -> {
+                        try {
+                            Semver tempVersion = new Semver(v);
+                            return tempVersion.satisfies(versionRangeList);
+                        } catch (IllegalArgumentException e) {
+                            return false;
+                        }
+                    })
+                    .max(Comparator.comparing(Semver::new))
+                    .orElseThrow(() -> new IllegalArgumentException("Not valid tofu version format"));
+        } catch (Exception e) {
+            log.error("Error parsing tofu version range: {}", e.getMessage());
+            throw new IllegalArgumentException("Invalid tofu version range");
+        }
+
+        log.info("Tofu version is \" {} \"", tofuVersion);
+        String finalTofuVersion = tofuVersion;
         List<TofuRelease> releases = tofuReleases.stream()
-                .filter(release -> release.getName().equals("v" + tofuVersion))
-                .collect(Collectors.toList());
+                .filter(release -> release.getName().equals(finalTofuVersion))
+                .toList();
 
         if (releases.size() != 1) {
             throw new IllegalArgumentException("Invalid Tofu Version");
         }
 
         List<TofuAsset> assets = releases.get(0).getAssets().stream().filter(asset -> asset.getName().endsWith(".zip"))
-                .collect(Collectors.toList());
+                .toList();
 
         boolean notFound = true;
         String tofuFilePath = "";
