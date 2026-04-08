@@ -408,12 +408,11 @@ public class TerraformClient implements AutoCloseable {
                 launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
                 break;
             case showPlanJson:
-                System.out.println("showPlanJson");
-                launcher.appendCommands("-json terraformLibrary.tfPlan");
+                launcher.appendCommands(TERRAFORM_PARAM_JSON, TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
                 break;
             case statePull:
-                log.info("tf state pull command");
                 launcher.appendCommands(TF_STATE_PULL);
+                break;
             default:
                 break;
         }
