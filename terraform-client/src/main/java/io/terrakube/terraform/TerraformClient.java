@@ -94,6 +94,16 @@ public class TerraformClient implements AutoCloseable {
                 TerraformCommand.showPlan);
     }
 
+    public CompletableFuture<Boolean> showPlanJson(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
+        checkVarFileParam(terraformProcessData);
+        checkTerraformVariablesParam(terraformProcessData);
+        return this.run(
+                terraformProcessData,
+                outputListener,
+                errorListener,
+                TerraformCommand.showPlanJson);
+    }
+
     public CompletableFuture<Boolean> showPlan() throws IOException {
         this.checkRunningParameters();
         return this.run(TerraformCommand.showPlan);
@@ -396,6 +406,10 @@ public class TerraformClient implements AutoCloseable {
                 break;
             case showPlan:
                 launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
+                break;
+            case showPlanJson:
+                System.out.println("showPlanJson");
+                launcher.appendCommands("-json terraformLibrary.tfPlan");
                 break;
             case statePull:
                 log.info("tf state pull command");
