@@ -12,6 +12,7 @@ public enum TerraformCommand {
     version("version"),
     show("show"),
     showPlan("show"),
+    showPlanJson("show"),
     output("output"),
     statePull("state");
 
