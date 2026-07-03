@@ -7,6 +7,8 @@ import java.util.function.*;
 import java.util.stream.*;
 
 public final class ProcessLauncher {
+    private static final long STREAM_DRAIN_TIMEOUT_SECONDS = 60;
+
     private Process process;
     private ProcessBuilder builder;
     private Consumer<String> outputListener, errorListener;
@@ -75,22 +77,50 @@ public final class ProcessLauncher {
         } catch (IOException ex) {
             throw new RuntimeException(ex);
         }
+        Future<Boolean> outputDrained = null;
+        Future<Boolean> errorDrained = null;
         if (!this.inheritIO) {
             if (this.outputListener != null) {
-                this.executor.submit(() -> this.readProcessStream(this.process.getInputStream(), this.outputListener));
+                outputDrained = this.executor.submit(() -> this.readProcessStream(this.process.getInputStream(), this.outputListener));
             }
             if (this.errorListener != null) {
-                this.executor.submit(() -> this.readProcessStream(this.process.getErrorStream(), this.errorListener));
+                errorDrained = this.executor.submit(() -> this.readProcessStream(this.process.getErrorStream(), this.errorListener));
             }
         }
+        final Future<Boolean> outputDone = outputDrained;
+        final Future<Boolean> errorDone = errorDrained;
         return CompletableFuture.supplyAsync(() -> {
             try {
-                return this.process.waitFor();
+                int exitCode = this.process.waitFor();
+                // Wait for the reader tasks to finish draining the process
+                // output before completing, so callers never observe the exit
+                // code while the listeners have received only part (or none)
+                // of the output. The readers were submitted before this task
+                // and read until EOF, so after process exit they only have
+                // the remaining pipe buffer left to deliver; the timeout is a
+                // safety net that turns a wedged reader into a visible
+                // failure instead of silently missing output.
+                awaitStreamDrained(outputDone, "output");
+                awaitStreamDrained(errorDone, "error");
+                return exitCode;
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
                 throw new RuntimeException(ex);
             }
         }, this.executor);
+    }
+
+    private void awaitStreamDrained(Future<Boolean> drained, String streamName) throws InterruptedException {
+        if (drained == null) {
+            return;
+        }
+        try {
+            if (!drained.get(STREAM_DRAIN_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+                throw new RuntimeException(String.format("Failed to capture process %s stream", streamName));
+            }
+        } catch (ExecutionException | TimeoutException ex) {
+            throw new RuntimeException(String.format("Failed to capture process %s stream", streamName), ex);
+        }
     }
 
     private boolean readProcessStream(InputStream stream, Consumer<String> listener) {
