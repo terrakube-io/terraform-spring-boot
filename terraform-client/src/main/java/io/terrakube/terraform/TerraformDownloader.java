@@ -262,13 +262,16 @@ public class TerraformDownloader {
         return arch.equals(this.getArch()) && os.equals(this.getOs());
     }
 
-    public String downloadTerraformVersion(String terraformVersion) throws IOException {
-        log.info("Downloading terraform version \" {} \" architecture {} Type {}", terraformVersion, SystemUtils.OS_ARCH, SystemUtils.OS_NAME);
+    /**
+     * Resolve a Terraform version constraint (e.g. {@code "~>1.5"}, {@code ">=1.4 <2.0"}) to a
+     * concrete version string (e.g. "1.5.7") without downloading anything.
+     */
+    public String resolveTerraformVersion(String terraformVersion) {
         try {
             RangeList versionRangeList = RangeListFactory.create(terraformVersion);
 
             Set<String> allTerraformKeys = terraformReleases.getVersions().keySet();
-            terraformVersion = allTerraformKeys.stream()
+            return allTerraformKeys.stream()
                     .filter(v -> {
                         try {
                             Semver tempVersion = new Semver(v);
@@ -283,6 +286,29 @@ public class TerraformDownloader {
             log.error("Error parsing Terraform version range: {}", e.getMessage());
             throw new IllegalArgumentException("Invalid Terraform version range");
         }
+    }
+
+    /**
+     * Return the expected local filesystem path where a Terraform or Tofu binary
+     * should reside after being downloaded/unzipped.
+     *
+     * @param resolvedVersion a concrete version string (e.g. "1.5.7")
+     * @param tofu            true for OpenTofu, false for Terraform
+     * @return absolute path to the binary executable
+     */
+    public String getTerraformBinaryPath(String resolvedVersion, boolean tofu) {
+        String product = tofu ? "tofu" : "terraform";
+        String directory = tofu ? TOFU_DIRECTORY : TERRAFORM_DIRECTORY;
+        return this.userHomeDirectory.concat(
+                FilenameUtils.separatorsToSystem(
+                        directory.concat(resolvedVersion.concat("/").concat(product))
+                )
+        );
+    }
+
+    public String downloadTerraformVersion(String terraformVersion) throws IOException {
+        log.info("Downloading terraform version \" {} \" architecture {} Type {}", terraformVersion, SystemUtils.OS_ARCH, SystemUtils.OS_NAME);
+        terraformVersion = resolveTerraformVersion(terraformVersion);
         log.info("Terraform version is \" {} \"", terraformVersion);
         TerraformVersion version = terraformReleases.getVersions().get(terraformVersion);
         boolean notFound = true;
@@ -307,21 +333,16 @@ public class TerraformDownloader {
         return terraformFilePath;
     }
 
-    public String downloadTofuVersion(String tofuVersion) throws IOException {
-        log.info("Downloading tofu version {} architecture {} Type {}", tofuVersion, SystemUtils.OS_ARCH,
-                SystemUtils.OS_NAME);
-
-        String defaultFileName = "tofu_%s_%s_%s.zip";
-
-        //Extracting only the relase name, for example: 1.8.0
+    /**
+     * Resolve a Tofu version constraint to a concrete version string without
+     * downloading anything.
+     */
+    public String resolveTofuVersion(String tofuVersion) {
         Set<String> allTofuKeys = tofuReleases.stream().map(TofuRelease::getName).collect(Collectors.toSet());
-        log.info("All tofu releases: {}", allTofuKeys);
-
         try {
             RangeList versionRangeList = RangeListFactory.create(tofuVersion);
 
-            //Filter tofu releases based on the version range
-            tofuVersion = allTofuKeys.stream()
+            return allTofuKeys.stream()
                     .filter(v -> {
                         try {
                             Semver tempVersion = new Semver(v);
@@ -336,6 +357,19 @@ public class TerraformDownloader {
             log.error("Error parsing tofu version range: {}", e.getMessage());
             throw new IllegalArgumentException("Invalid tofu version range");
         }
+    }
+
+    public String downloadTofuVersion(String tofuVersion) throws IOException {
+        log.info("Downloading tofu version {} architecture {} Type {}", tofuVersion, SystemUtils.OS_ARCH,
+                SystemUtils.OS_NAME);
+
+        String defaultFileName = "tofu_%s_%s_%s.zip";
+
+        //Extracting only the relase name, for example: 1.8.0
+        Set<String> allTofuKeys = tofuReleases.stream().map(TofuRelease::getName).collect(Collectors.toSet());
+        log.info("All tofu releases: {}", allTofuKeys);
+
+        tofuVersion = resolveTofuVersion(tofuVersion);
 
         log.info("Tofu version is \" {} \"", tofuVersion);
         String finalTofuVersion = tofuVersion;
