@@ -263,7 +263,7 @@ public class TerraformDownloader {
     }
 
     /**
-     * Resolve a Terraform version constraint (e.g. "~>1.5", ">=1.4 <2.0") to a
+     * Resolve a Terraform version constraint (e.g. {@code "~>1.5"}, {@code ">=1.4 <2.0"}) to a
      * concrete version string (e.g. "1.5.7") without downloading anything.
      */
     public String resolveTerraformVersion(String terraformVersion) {
