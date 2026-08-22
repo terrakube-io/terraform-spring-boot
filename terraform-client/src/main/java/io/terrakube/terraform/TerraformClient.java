@@ -2,6 +2,7 @@ package io.terrakube.terraform;
 
 import lombok.*;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.io.FileUtils;
 import org.apache.maven.artifact.versioning.ComparableVersion;
 
 import java.io.*;
@@ -35,7 +36,19 @@ public class TerraformClient implements AutoCloseable {
     private static final String TERRAFORM_PLAN_REFRESH_ONLY="-refresh-only";
     private static final String TF_STATE_PULL="pull";
 
+    private static final String TERRAGRUNT_PARAM_NON_INTERACTIVE = "--terragrunt-non-interactive";
+    private static final String TERRAGRUNT_PARAM_TFPATH = "--terragrunt-tfpath";
+
     private final ExecutorService executor = Executors.newWorkStealingPool();
+
+    /**
+     * Lazily-initialized, shared {@link TerraformDownloader} instance.
+     * Constructed once on first use and reused for all subsequent commands on
+     * this client, preventing the 3 HTTP release-manifest fetches that were
+     * otherwise issued on every single launcher call (init, plan, apply, …).
+     * Guarded by {@code synchronized(this)} via {@link #createTerraformDownloader()}.
+     */
+    private volatile TerraformDownloader cachedDownloader;
 
     private File workingDirectory;
     private boolean inheritIO;
@@ -46,6 +59,7 @@ public class TerraformClient implements AutoCloseable {
     private String backendConfig;
     private String terraformReleasesUrl;
     private String tofuReleasesUrl;
+    private String terragruntReleasesUrl;
 
     private String varFileName;
 
@@ -134,10 +148,18 @@ public class TerraformClient implements AutoCloseable {
 
     public CompletableFuture<Integer> planDetailExitCode(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         terraformProcessData.setDetailExitCode(true);
+        syncTerragruntPlanFileBeforeOperation(terraformProcessData);
         return this.getTerraformLauncher(
                 terraformProcessData,
                 outputListener,
-                errorListener, TerraformCommand.plan).launch();
+                errorListener, TerraformCommand.plan).launch().thenApply(exitCode -> {
+            // With -detailed-exitcode: 0 = no changes, 2 = changes present; both are plan successes.
+            // 1 = error — do not sync partial/absent plan and lock files in that case.
+            if (exitCode == 0 || exitCode == 2) {
+                syncTerragruntPlanFileAfterPlan(terraformProcessData, true);
+            }
+            return exitCode;
+        });
     }
 
     public CompletableFuture<Boolean> statePull(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
@@ -158,10 +180,18 @@ public class TerraformClient implements AutoCloseable {
 
     public CompletableFuture<Integer> planDestroyDetailExitCode(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         terraformProcessData.setDetailExitCode(true);
+        syncTerragruntPlanFileBeforeOperation(terraformProcessData);
         return this.getTerraformLauncher(
                 terraformProcessData,
                 outputListener,
-                errorListener, TerraformCommand.planDestroy).launch();
+                errorListener, TerraformCommand.planDestroy).launch().thenApply(exitCode -> {
+            // With -detailed-exitcode: 0 = no changes, 2 = changes present; both are plan successes.
+            // 1 = error — do not sync partial/absent plan and lock files in that case.
+            if (exitCode == 0 || exitCode == 2) {
+                syncTerragruntPlanFileAfterPlan(terraformProcessData, true);
+            }
+            return exitCode;
+        });
     }
 
     public CompletableFuture<Boolean> plan() throws IOException {
@@ -214,6 +244,7 @@ public class TerraformClient implements AutoCloseable {
 
     private CompletableFuture<Boolean> run(TerraformProcessData terraformProcessData, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand... commands) throws IOException {
         assert commands.length > 0;
+        syncTerragruntPlanFileBeforeOperation(terraformProcessData);
         ProcessLauncher[] launchers = new ProcessLauncher[commands.length];
         for (int i = 0; i < commands.length; i++) {
             launchers[i] = this.getTerraformLauncher(
@@ -222,7 +253,23 @@ public class TerraformClient implements AutoCloseable {
                     errorListener, commands[i]);
         }
 
-        return getLauncherResult(launchers, commands);
+        // Do NOT sync the lock file to the working directory when the only command is
+        // init.  Copying the lock file mid-session changes the working directory
+        // content, which causes Terragrunt 1.0.x to compute a different module hash
+        // for the subsequent plan call and route it to a new, uninitialized cache
+        // directory — leading to a provider checksum mismatch.
+        // The lock file flows cache → workDir only after plan/apply/destroy so it is
+        // available for source control without disrupting the ongoing session.
+        boolean syncLockFile = !(commands.length == 1 && commands[0] == TerraformCommand.init);
+
+        return getLauncherResult(launchers, commands).thenApply(success -> {
+            // Only sync plan/lock files when the operation succeeded; a failed init or plan
+            // may leave the cache in a partial state and we should not propagate that.
+            if (success) {
+                syncTerragruntPlanFileAfterPlan(terraformProcessData, syncLockFile);
+            }
+            return success;
+        });
     }
 
     private CompletableFuture<Boolean> getLauncherResult(ProcessLauncher[] launchers, TerraformCommand[] commands) {
@@ -257,7 +304,7 @@ public class TerraformClient implements AutoCloseable {
 
     private void checkTerraformVariablesParam(TerraformProcessData terraformProcessData) {
         if (!terraformProcessData.getTerraformVariables().isEmpty()) {
-            throw new IllegalArgumentException("terraform variables parameter should be empty for this terraform command");
+            throw new IllegalArgumentException("terraformVariables parameter should be empty for this terraform command");
         }
     }
 
@@ -290,14 +337,29 @@ public class TerraformClient implements AutoCloseable {
     }
 
     private ProcessLauncher getTerraformLauncher(TerraformProcessData terraformProcessData, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand command) throws IOException {
-        TerraformDownloader terraformDownloader = createTerraformDownloader();
-        String terraformPath = terraformProcessData.isTofu() ? terraformDownloader.downloadTofuVersion(terraformProcessData.getTerraformVersion()) : terraformDownloader.downloadTerraformVersion(terraformProcessData.getTerraformVersion());
-
-        if (terraformProcessData.sshFile != null && command.equals(TerraformCommand.init)) {
-            return getTerraformInitWithSSH(terraformPath, terraformProcessData, outputListener, errorListener);
+        // Validate terragrunt-specific required field before any download attempt
+        // so the caller gets a meaningful error instead of an NPE deep in semver parsing.
+        if (terraformProcessData.isTerragrunt() &&
+                (terraformProcessData.getTerragruntVersion() == null || terraformProcessData.getTerragruntVersion().isBlank())) {
+            throw new IllegalArgumentException("terragruntVersion must not be null or blank when terragrunt=true");
         }
 
-        ProcessLauncher launcher = new ProcessLauncher(this.executor, terraformPath, command.getLabel());
+        TerraformDownloader terraformDownloader = createTerraformDownloader();
+        String executablePath;
+        String enginePath = null;
+
+        if (terraformProcessData.isTerragrunt()) {
+            enginePath = terraformProcessData.isTofu() ? terraformDownloader.downloadTofuVersion(terraformProcessData.getTerraformVersion()) : terraformDownloader.downloadTerraformVersion(terraformProcessData.getTerraformVersion());
+            executablePath = terraformDownloader.downloadTerragruntVersion(terraformProcessData.getTerragruntVersion());
+        } else {
+            executablePath = terraformProcessData.isTofu() ? terraformDownloader.downloadTofuVersion(terraformProcessData.getTerraformVersion()) : terraformDownloader.downloadTerraformVersion(terraformProcessData.getTerraformVersion());
+        }
+
+        if (terraformProcessData.sshFile != null && command.equals(TerraformCommand.init)) {
+            return getTerraformInitWithSSH(executablePath, terraformProcessData, outputListener, errorListener, enginePath);
+        }
+
+        ProcessLauncher launcher = new ProcessLauncher(this.executor, executablePath, command.getLabel());
 
         launcher.setDirectory(terraformProcessData.getWorkingDirectory());
         launcher.setInheritIO(this.isInheritIO());
@@ -307,13 +369,27 @@ public class TerraformClient implements AutoCloseable {
                 launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
             }
 
+        if (terraformProcessData.isTerragrunt()) {
+            launcher.setEnvironmentVariable("TERRAGRUNT_NON_INTERACTIVE", "true");
+            launcher.setEnvironmentVariable("TG_NON_INTERACTIVE", "true");
+            launcher.setEnvironmentVariable("TERRAGRUNT_FORWARD_TF_STDOUT", "true");
+            launcher.setEnvironmentVariable("TG_TF_FORWARD_STDOUT", "true");
+            if (enginePath != null) {
+                launcher.setEnvironmentVariable("TERRAGRUNT_TFPATH", enginePath);
+                launcher.setEnvironmentVariable("TG_TF_PATH", enginePath);
+            }
+        }
+
         ComparableVersion version = new ComparableVersion(terraformProcessData.getTerraformVersion());
 
         if (!this.showColor)
             launcher.appendCommands(TERRAFORM_PARAM_NO_COLOR);
 
         //https://www.terraform.io/docs/internals/machine-readable-ui.html
-        if (this.jsonOutput && version.compareTo(new ComparableVersion("0.15.2")) > 0)
+        // JSON output is intentionally disabled when running via Terragrunt:
+        // Terragrunt 0.50+ wraps Terraform's output in its own log lines, so the
+        // combined stdout is not valid Terraform JSON and breaks downstream parsers.
+        if (this.jsonOutput && !terraformProcessData.isTerragrunt() && version.compareTo(new ComparableVersion("0.15.2")) > 0)
             switch (command) {
                 case plan:
                 case apply:
@@ -423,7 +499,7 @@ public class TerraformClient implements AutoCloseable {
         return launcher;
     }
 
-    private ProcessLauncher getTerraformInitWithSSH(String terraformPath, TerraformProcessData terraformProcessData, Consumer<String> outputListener, Consumer<String> errorListener) {
+    private ProcessLauncher getTerraformInitWithSSH(String terraformPath, TerraformProcessData terraformProcessData, Consumer<String> outputListener, Consumer<String> errorListener, String enginePath) {
         String initSSHCommand = String.format("GIT_SSH_COMMAND='ssh -i %s -o StrictHostKeyChecking=no' %s init", terraformProcessData.getSshFile().getAbsolutePath(), terraformPath);
         ProcessLauncher processLauncher = new ProcessLauncher(this.executor, "bash", "-c");
         processLauncher.setInheritIO(this.isInheritIO());
@@ -433,6 +509,17 @@ public class TerraformClient implements AutoCloseable {
             for (Map.Entry<String, String> entry : terraformProcessData.getTerraformEnvironmentVariables().entrySet()) {
                 processLauncher.setEnvironmentVariable(entry.getKey(), entry.getValue());
             }
+
+        if (terraformProcessData.isTerragrunt()) {
+            processLauncher.setEnvironmentVariable("TERRAGRUNT_NON_INTERACTIVE", "true");
+            processLauncher.setEnvironmentVariable("TG_NON_INTERACTIVE", "true");
+            processLauncher.setEnvironmentVariable("TERRAGRUNT_FORWARD_TF_STDOUT", "true");
+            processLauncher.setEnvironmentVariable("TG_TF_FORWARD_STDOUT", "true");
+            if (enginePath != null) {
+                processLauncher.setEnvironmentVariable("TERRAGRUNT_TFPATH", enginePath);
+                processLauncher.setEnvironmentVariable("TG_TF_PATH", enginePath);
+            }
+        }
 
         if (!this.showColor)
             initSSHCommand = initSSHCommand.concat(" " + TERRAFORM_PARAM_NO_COLOR);
@@ -450,14 +537,124 @@ public class TerraformClient implements AutoCloseable {
         return processLauncher;
     }
 
-    public TerraformDownloader createTerraformDownloader() {
-        synchronized (this) {
-            String TERRAFORM_RELEASES_URL = (this.terraformReleasesUrl != null && !terraformReleasesUrl.isEmpty()) ? this.terraformReleasesUrl : TerraformDownloader.TERRAFORM_RELEASES_URL;
-            String TOFU_RELEASES_URL = (this.tofuReleasesUrl != null && !tofuReleasesUrl.isEmpty()) ? this.tofuReleasesUrl : TerraformDownloader.TOFU_RELEASES_URL;
-
-            log.info("Creating terraform downloader using terraform release URL: {} and tofu release URL: {}", TERRAFORM_RELEASES_URL, TOFU_RELEASES_URL);
-            return new TerraformDownloader(TERRAFORM_RELEASES_URL, TOFU_RELEASES_URL);
+    private void syncTerragruntPlanFileBeforeOperation(TerraformProcessData terraformProcessData) {
+        if (terraformProcessData != null && terraformProcessData.isTerragrunt() && terraformProcessData.getWorkingDirectory() != null) {
+            File tgCache = new File(terraformProcessData.getWorkingDirectory(), ".terragrunt-cache");
+            if (tgCache.exists() && tgCache.isDirectory()) {
+                // Only sync the plan file back into the cache (e.g. for apply after plan).
+                // The .terraform.lock.hcl must NEVER be pushed back into the cache: it is
+                // authoritative only as output from `terragrunt init` (cache → workDir).
+                // Copying a stale lock file from workDir into the cache overwrites the fresh
+                // one generated by init and causes checksum mismatches during plan.
+                File planInWorkDir = new File(terraformProcessData.getWorkingDirectory(), TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
+                if (planInWorkDir.exists() && planInWorkDir.isFile()) {
+                    copyFileToTerragruntCache(tgCache, planInWorkDir, TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
+                }
+            }
         }
+    }
+
+    private void copyFileToTerragruntCache(File currentDir, File sourceFile, String targetFileName) {
+        File[] files = currentDir.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                if (file.isDirectory() && !file.getName().startsWith(".")) {
+                    // Skip hidden directories (e.g. .terraform, .git) to avoid writing the
+                    // plan file into provider plugin directories.  Terraform computes the h1:
+                    // lock-file hash as a dirhash over the provider binary directory; any
+                    // extra file placed there (like terraformLibrary.tfPlan) changes that hash
+                    // and causes "cached package does not match checksums" on the next plan.
+                    try {
+                        FileUtils.copyFile(sourceFile, new File(file, targetFileName));
+                    } catch (IOException e) {
+                        log.warn("Could not copy file {} to terragrunt cache dir {}: {}", targetFileName, file.getAbsolutePath(), e.getMessage());
+                    }
+                    copyFileToTerragruntCache(file, sourceFile, targetFileName);
+                }
+            }
+        }
+    }
+
+    private void syncTerragruntPlanFileAfterPlan(TerraformProcessData terraformProcessData) {
+        syncTerragruntPlanFileAfterPlan(terraformProcessData, true);
+    }
+
+    /**
+     * Copies Terragrunt-managed output files from the cache back to the working directory.
+     *
+     * @param syncLockFile when {@code true} the {@code .terraform.lock.hcl} is also copied;
+     *                     pass {@code false} for init-only runs to avoid changing the working
+     *                     directory content mid-session (which would shift Terragrunt’s module
+     *                     hash and route the next plan to a different, uninitialized cache dir).
+     */
+    private void syncTerragruntPlanFileAfterPlan(TerraformProcessData terraformProcessData, boolean syncLockFile) {
+        if (terraformProcessData != null && terraformProcessData.isTerragrunt() && terraformProcessData.getWorkingDirectory() != null) {
+            File tgCache = new File(terraformProcessData.getWorkingDirectory(), ".terragrunt-cache");
+            if (tgCache.exists() && tgCache.isDirectory()) {
+                File planInWorkDir = new File(terraformProcessData.getWorkingDirectory(), TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
+                if (!planInWorkDir.exists()) {
+                    File foundPlan = findFileInTerragruntCache(tgCache, TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
+                    if (foundPlan != null) {
+                        try {
+                            FileUtils.copyFile(foundPlan, planInWorkDir);
+                            log.info("Copied Terragrunt plan file from {} to {}", foundPlan.getAbsolutePath(), planInWorkDir.getAbsolutePath());
+                        } catch (IOException e) {
+                            log.error("Failed to copy Terragrunt plan file to working directory: {}", e.getMessage());
+                        }
+                    }
+                }
+                if (syncLockFile) {
+                    File lockInWorkDir = new File(terraformProcessData.getWorkingDirectory(), ".terraform.lock.hcl");
+                    File foundLock = findFileInTerragruntCache(tgCache, ".terraform.lock.hcl");
+                    if (foundLock != null) {
+                        try {
+                            FileUtils.copyFile(foundLock, lockInWorkDir);
+                            log.info("Copied Terragrunt lock file from {} to {}", foundLock.getAbsolutePath(), lockInWorkDir.getAbsolutePath());
+                        } catch (IOException e) {
+                            log.warn("Failed to copy Terragrunt lock file to working directory: {}", e.getMessage());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private File findFileInTerragruntCache(File dir, String fileName) {
+        File targetFile = new File(dir, fileName);
+        if (targetFile.exists() && targetFile.isFile()) {
+            return targetFile;
+        }
+        File[] children = dir.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                if (child.isDirectory()) {
+                    File found = findFileInTerragruntCache(child, fileName);
+                    if (found != null) {
+                        return found;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    public TerraformDownloader createTerraformDownloader() {
+        // Double-checked locking: avoid re-fetching all three release manifests on every
+        // command.  The downloader is stateless after construction (all releases are loaded
+        // eagerly in the constructor), so it is safe to share across threads.
+        if (this.cachedDownloader == null) {
+            synchronized (this) {
+                if (this.cachedDownloader == null) {
+                    String TERRAFORM_RELEASES_URL = (this.terraformReleasesUrl != null && !terraformReleasesUrl.isEmpty()) ? this.terraformReleasesUrl : TerraformDownloader.TERRAFORM_RELEASES_URL;
+                    String TOFU_RELEASES_URL = (this.tofuReleasesUrl != null && !tofuReleasesUrl.isEmpty()) ? this.tofuReleasesUrl : TerraformDownloader.TOFU_RELEASES_URL;
+                    String TERRAGRUNT_RELEASES_URL = (this.terragruntReleasesUrl != null && !terragruntReleasesUrl.isEmpty()) ? this.terragruntReleasesUrl : TerraformDownloader.TERRAGRUNT_RELEASES_URL;
+
+                    log.info("Creating terraform downloader using terraform release URL: {}, tofu release URL: {}, terragrunt release URL: {}", TERRAFORM_RELEASES_URL, TOFU_RELEASES_URL, TERRAGRUNT_RELEASES_URL);
+                    this.cachedDownloader = new TerraformDownloader(TERRAFORM_RELEASES_URL, TOFU_RELEASES_URL, TERRAGRUNT_RELEASES_URL);
+                }
+            }
+        }
+        return this.cachedDownloader;
     }
 
     @Override

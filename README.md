@@ -193,21 +193,73 @@ public class SpringStarterSampleApp implements CommandLineRunner {
 
 ### OpenTofu Support
 
-When using with opentofu you need to use the terraformProcessData like the following:
+When using with OpenTofu you need to use `TerraformProcessData` like the following:
 
 ```java
-        TerraformProcessData terraformProcessData = TerraformProcessData.builder()
-                .terraformVersion("1.6.0")
-                .workingDirectory(new File("/some/terraform/path"))
-                .tofu(true)
-                .build();
+TerraformProcessData terraformProcessData = TerraformProcessData.builder()
+        .terraformVersion("1.6.0")
+        .workingDirectory(new File("/some/terraform/path"))
+        .tofu(true)
+        .build();
 ```
 
-### Custom Terraform Releases URL
+### Terragrunt Support
 
-You can customize the URL from where you download your terraform binary.
+`terraform-spring-boot` supports [Terragrunt](https://terragrunt.gruntwork.io/) as an orchestration engine wrapper over Terraform or OpenTofu. When enabled, the client manages dual binaries: it downloads the requested Terragrunt version as well as the underlying engine (Terraform or OpenTofu), and automatically sets `--terragrunt-non-interactive`, `--terragrunt-tfpath`, and the `TERRAGRUNT_TFPATH` environment variable.
 
-Use terraform releases url field in the builder:
+#### 1. Terragrunt with Terraform
+
+```java
+TerraformProcessData terraformProcessData = TerraformProcessData.builder()
+        .terragrunt(true)
+        .terragruntVersion("0.68.5")
+        .terraformVersion("1.9.5") // Underlying Terraform version
+        .tofu(false)
+        .workingDirectory(new File("/some/terragrunt/workspace"))
+        .build();
+
+boolean execution = terraformClient.plan(
+        terraformProcessData,
+        output,
+        errorOutput).get();
+```
+
+#### 2. Terragrunt with OpenTofu
+
+```java
+TerraformProcessData terraformProcessData = TerraformProcessData.builder()
+        .terragrunt(true)
+        .terragruntVersion("0.68.5")
+        .terraformVersion("1.8.2") // Underlying OpenTofu version
+        .tofu(true)                // Use OpenTofu instead of Terraform
+        .workingDirectory(new File("/some/terragrunt/workspace"))
+        .build();
+
+boolean execution = terraformClient.apply(
+        terraformProcessData,
+        output,
+        errorOutput).get();
+```
+
+#### 3. Direct Terragrunt Downloader Usage
+
+You can also use `TerraformDownloader` to resolve version constraints and download Terragrunt binaries directly:
+
+```java
+TerraformDownloader downloader = new TerraformDownloader();
+
+// Resolve semantic version constraints (e.g. "~>0.68.0") to concrete version
+String resolvedVersion = downloader.resolveTerragruntVersion("~>0.68.0");
+
+// Download binary to ~/.terraform-spring-boot/terragrunt/<version>/terragrunt
+String binaryPath = downloader.downloadTerragruntVersion("0.68.5");
+```
+
+### Custom Releases URLs
+
+You can customize the URLs from where you download your Terraform, OpenTofu, and Terragrunt binaries.
+
+Use the releases URL fields in the builder:
 
 ```java
 package io.terrakube.terraform;
@@ -232,6 +284,7 @@ public final class Main {
                 .outputListener(System.out::println)
                 .terraformReleasesUrl("https://eov1ys4sxa1bfy9.m.pipedream.net/")
                 .tofuReleasesUrl("https://api.github.com/repos/opentofu/opentofu/releases")
+                .terragruntReleasesUrl("https://api.github.com/repos/gruntwork-io/terragrunt/releases")
                 .build();
     }
 }
