@@ -22,6 +22,9 @@ public class TerraformProcessData {
     @Builder.Default
     boolean tofu = false;
     @Builder.Default
+    boolean terragrunt = false;
+    String terragruntVersion;
+    @Builder.Default
     boolean detailExitCode = false;
     @Singular Map<String, String> terraformVariables;
     @Singular Map<String, String> terraformEnvironmentVariables;
