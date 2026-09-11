@@ -1,25 +1,69 @@
 package io.terrakube.terraform;
 
+import lombok.extern.slf4j.Slf4j;
+
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
 import java.util.function.*;
 import java.util.stream.*;
 
+@Slf4j
 public final class ProcessLauncher {
     private static final long STREAM_DRAIN_TIMEOUT_SECONDS = 60;
+    private static final long FORCIBLE_EXIT_TIMEOUT_SECONDS = 5;
+    // Slack on the invokeAll bound below. Without it the deadline equals the
+    // exact worst case of the task it bounds, so a task still in its
+    // post-SIGKILL confirmation waitFor() is cancelled on the boundary and
+    // reported as a false orphan.
+    private static final long TERMINATION_SLACK_SECONDS = 1;
+    static final long GRACE_PERIOD_SECONDS = 10;
 
-    private Process process;
+    private static final AtomicInteger TERMINATOR_THREAD_COUNT = new AtomicInteger();
+    // Termination cannot run on the launcher's own executor: two reader tasks and
+    // the waitFor() task are blocked there for as long as the process lives, so
+    // enforcing a timeout on that pool needs a fourth free worker per running
+    // command and silently does nothing below that (measured: a 1s timeout left
+    // the process alive for 45s at ForkJoinPool parallelism 1 and 2). Static and
+    // never shut down: close() must be able to terminate, and a cached pool holds
+    // no threads at idle.
+    private static final ExecutorService TERMINATOR = Executors.newCachedThreadPool(runnable -> {
+        Thread thread = new Thread(runnable, "terraform-terminate-" + TERMINATOR_THREAD_COUNT.incrementAndGet());
+        thread.setDaemon(true);
+        // A new thread inherits the context classloader of whoever happened to
+        // submit first - for the timeout path that is the JDK's shared delayer
+        // thread. In a static pool that is never shut down, that pins an
+        // application classloader.
+        thread.setContextClassLoader(ProcessLauncher.class.getClassLoader());
+        return thread;
+    });
+
+    private volatile Process process;
     private ProcessBuilder builder;
     private Consumer<String> outputListener, errorListener;
+    private Consumer<ProcessLauncher> startedListener;
     private boolean inheritIO;
     private ExecutorService executor;
+    private long timeoutSeconds;
 
     ProcessLauncher(ExecutorService executor, String... commands) {
+        this(executor, null, commands);
+    }
+
+    /**
+     * @param startedListener notified from inside {@link #launch()} as soon as
+     *                        the process exists, so that an owner tracking live
+     *                        launchers never sees one before it has a process
+     *                        and never misses one that already has.
+     */
+    ProcessLauncher(ExecutorService executor, Consumer<ProcessLauncher> startedListener, String... commands) {
         assert executor != null;
         this.executor = executor;
+        this.startedListener = startedListener;
         this.process = null;
         this.builder = new ProcessBuilder(commands);
+        this.timeoutSeconds = 0;
     }
 
 	void setOutputListener(Consumer<String> listener) {
@@ -32,6 +76,11 @@ public final class ProcessLauncher {
 		this.errorListener = listener;
     }
     
+    void setTimeoutSeconds(long timeoutSeconds) {
+        assert this.process == null;
+        this.timeoutSeconds = timeoutSeconds;
+    }
+
 	void setInheritIO(boolean inheritIO) {
         assert this.process == null;
 		this.inheritIO = inheritIO;
@@ -67,6 +116,20 @@ public final class ProcessLauncher {
         }
     }
 
+    /**
+     * Starts the process and returns a future that completes with its exit
+     * code once the output listeners have received the complete output.
+     *
+     * <p>If a timeout was set with {@link #setTimeoutSeconds(long)}, the process
+     * and its descendants are terminated when it expires and the returned future
+     * completes exceptionally instead. It completes once that termination has
+     * finished, which is up to 15 seconds after the deadline (a 10 second grace
+     * period plus a 5 second forcible-exit wait), not at the deadline itself.
+     * The failure is a {@link TimeoutException}; following
+     * the {@link CompletableFuture} convention it reaches callers wrapped in a
+     * {@link CompletionException} from {@code join()} or in an
+     * {@link ExecutionException} from {@code get()}.
+     */
     CompletableFuture<Integer> launch() {
         assert this.process == null;
         if (this.inheritIO) {
@@ -76,6 +139,16 @@ public final class ProcessLauncher {
             this.process = this.builder.start();
         } catch (IOException ex) {
             throw new RuntimeException(ex);
+        }
+        if (this.startedListener != null) {
+            try {
+                this.startedListener.accept(this);
+            } catch (RuntimeException | Error ex) {
+                // The process is already running but nothing is tracking it, so
+                // it would outlive the JVM unreachable.
+                this.process.destroyForcibly();
+                throw ex;
+            }
         }
         Future<Boolean> outputDrained = null;
         Future<Boolean> errorDrained = null;
@@ -89,7 +162,7 @@ public final class ProcessLauncher {
         }
         final Future<Boolean> outputDone = outputDrained;
         final Future<Boolean> errorDone = errorDrained;
-        return CompletableFuture.supplyAsync(() -> {
+        CompletableFuture<Integer> result = CompletableFuture.supplyAsync(() -> {
             try {
                 int exitCode = this.process.waitFor();
                 // Wait for the reader tasks to finish draining the process
@@ -108,6 +181,124 @@ public final class ProcessLauncher {
                 throw new RuntimeException(ex);
             }
         }, this.executor);
+        if (this.timeoutSeconds <= 0) {
+            return result;
+        }
+        // orTimeout() completes the future on the JDK's shared delayer thread, so
+        // the blocking termination is handed off to TERMINATOR.
+        return result
+                .orTimeout(this.timeoutSeconds, TimeUnit.SECONDS)
+                .whenCompleteAsync((code, ex) -> {
+                    if (ex instanceof TimeoutException && !this.terminate(GRACE_PERIOD_SECONDS)) {
+                        log.warn("Timed out process {} could not be terminated and may be orphaned", this.builder.command());
+                    }
+                    // terminate() restores the interrupt flag for its caller's
+                    // benefit; clear it again so a pooled thread does not carry
+                    // it into an unrelated task.
+                    Thread.interrupted();
+                }, TERMINATOR);
+    }
+
+    /**
+     * Terminates the process, first politely and then forcibly, together with
+     * any descendants that outlive it.
+     *
+     * <p>Declares no checked exception on purpose: it is called from a
+     * {@link java.util.function.BiConsumer} lambda, which cannot throw one. An
+     * interruption while waiting is restored on the thread and otherwise
+     * ignored, which means callers that terminate more than one launcher must
+     * clear it between calls - a set flag makes the next {@code waitFor} throw
+     * instead of returning false, skipping the forcible kill.
+     * {@link #terminateAll} is the only such caller and does exactly that.
+     *
+     * @param gracePeriodSeconds how long the process may take to shut down on
+     *                           its own before it is killed
+     * @return true if the process is no longer alive when this returns
+     */
+    boolean terminate(long gracePeriodSeconds) {
+        if (this.process == null) {
+            return true;
+        }
+        ProcessHandle handle = this.process.toHandle();
+        // Snapshot the descendants before signalling: once the parent dies its
+        // children are reparented and disappear from this view. Best effort, the
+        // list may legitimately be empty.
+        Set<ProcessHandle> descendants = new LinkedHashSet<>(handle.descendants().collect(Collectors.toList()));
+
+        // ProcessHandle.destroy(), never Process.destroy(). ProcessImpl.destroy(boolean)
+        // on unix closes the child's stdin/stdout/stderr unconditionally and
+        // immediately after signalling. Terraform writes its interrupt notice to
+        // stdout from inside its own SIGTERM handler, and Go terminates on an
+        // unhandled SIGPIPE on fd 1/2, so Process.destroy() kills terraform in the
+        // middle of its shutdown, before it releases its state lock or reaps its
+        // provider plugins. Measured 3/3 killed at exit 141 with Process.destroy()
+        // against 3/3 clean shutdowns with toHandle().destroy(). ProcessHandleImpl
+        // holds only a pid and a start time, so it has no streams to close. Neither
+        // javadoc documents any of this. Do not "simplify" this back to
+        // process.destroy().
+        handle.destroy();
+        try {
+            if (!this.process.waitFor(gracePeriodSeconds, TimeUnit.SECONDS)) {
+                // The parent is usually still alive here, so it can still be asked
+                // about children it forked during the shutdown it did not do.
+                descendants.addAll(handle.descendants().collect(Collectors.toList()));
+                handle.destroyForcibly();
+                this.process.waitFor(FORCIBLE_EXIT_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+            }
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+
+        for (ProcessHandle descendant : descendants) {
+            if (descendant.isAlive()) {
+                descendant.destroyForcibly();
+            }
+        }
+        return !this.process.isAlive();
+    }
+
+    /**
+     * Terminates every launcher in parallel and returns the ones still alive.
+     *
+     * <p>Parallel, not sequential: every launcher gets the full grace period,
+     * and the whole call costs one grace period rather than one per launcher,
+     * which is what keeps a shutdown inside a pod's termination grace period.
+     *
+     * @return the launchers whose process is still alive, i.e. orphaned
+     */
+    static List<ProcessLauncher> terminateAll(Collection<ProcessLauncher> launchers, long gracePeriodSeconds) {
+        List<Callable<Boolean>> terminations = launchers.stream()
+                .map(launcher -> (Callable<Boolean>) () -> {
+                    // Start from a clean flag rather than trusting whoever used
+                    // this worker last: a cancel(true) at the invokeAll deadline
+                    // is delivered after the previous task's finally has run, and
+                    // neither FutureTask nor the pool clears it.
+                    Thread.interrupted();
+                    try {
+                        return launcher.terminate(gracePeriodSeconds);
+                    } finally {
+                        // Clear the flag terminate() restores, so it neither
+                        // reaches an unrelated task on this pooled thread nor a
+                        // sibling termination.
+                        Thread.interrupted();
+                    }
+                })
+                .collect(Collectors.toList());
+        try {
+            TERMINATOR.invokeAll(terminations,
+                    gracePeriodSeconds + FORCIBLE_EXIT_TIMEOUT_SECONDS + TERMINATION_SLACK_SECONDS, TimeUnit.SECONDS);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        }
+        return launchers.stream().filter(launcher -> !launcher.hasExited()).collect(Collectors.toList());
+    }
+
+    /**
+     * @return true if this launcher has no process left to terminate, either
+     *         because it was never launched or because the process has exited.
+     */
+    boolean hasExited() {
+        return this.process == null || !this.process.isAlive();
     }
 
     private void awaitStreamDrained(Future<Boolean> drained, String streamName) throws InterruptedException {

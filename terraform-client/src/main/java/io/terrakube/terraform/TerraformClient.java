@@ -34,8 +34,15 @@ public class TerraformClient implements AutoCloseable {
     private static final String TERRAFORM_PLAN_REFRESH_FALSE="-refresh=false";
     private static final String TERRAFORM_PLAN_REFRESH_ONLY="-refresh-only";
     private static final String TF_STATE_PULL="pull";
+    // Deliberately separate from ProcessLauncher.GRACE_PERIOD_SECONDS: that one
+    // answers "how long may terraform take to shut down after a job timeout",
+    // this one "how much of the pod's termination grace period may close()
+    // spend". They happen to agree today.
+    private static final long CLOSE_GRACE_PERIOD_SECONDS = 10;
 
     private final ExecutorService executor = Executors.newWorkStealingPool();
+    private final Set<ProcessLauncher> liveLaunchers = ConcurrentHashMap.newKeySet();
+    private volatile boolean closed;
 
     private File workingDirectory;
     private boolean inheritIO;
@@ -297,7 +304,7 @@ public class TerraformClient implements AutoCloseable {
             return getTerraformInitWithSSH(terraformPath, terraformProcessData, outputListener, errorListener);
         }
 
-        ProcessLauncher launcher = new ProcessLauncher(this.executor, terraformPath, command.getLabel());
+        ProcessLauncher launcher = newLauncher(terraformProcessData, terraformPath, command.getLabel());
 
         launcher.setDirectory(terraformProcessData.getWorkingDirectory());
         launcher.setInheritIO(this.isInheritIO());
@@ -423,9 +430,35 @@ public class TerraformClient implements AutoCloseable {
         return launcher;
     }
 
+    /**
+     * Creates a launcher carrying the per-job timeout, which registers itself as
+     * live once it has actually started a process so that {@link #close()} can
+     * reach it.
+     */
+    ProcessLauncher newLauncher(TerraformProcessData terraformProcessData, String... commands) {
+        ProcessLauncher launcher = new ProcessLauncher(this.executor, this::registerLiveLauncher, commands);
+        launcher.setTimeoutSeconds(terraformProcessData.getTimeoutSeconds());
+        return launcher;
+    }
+
+    private void registerLiveLauncher(ProcessLauncher launcher) {
+        // Prune on the way in, so the set is bounded by the number of
+        // concurrently running commands rather than by the number ever run.
+        this.liveLaunchers.removeIf(ProcessLauncher::hasExited);
+        this.liveLaunchers.add(launcher);
+        // close() iterates a weakly consistent view, so a launcher registering
+        // concurrently can be missed and then cleared away. Re-check after the
+        // add and refuse: launch() kills the process it just started and
+        // rethrows, rather than leaving it running with nothing tracking it.
+        if (this.closed) {
+            this.liveLaunchers.remove(launcher);
+            throw new IllegalStateException("TerraformClient is closed");
+        }
+    }
+
     private ProcessLauncher getTerraformInitWithSSH(String terraformPath, TerraformProcessData terraformProcessData, Consumer<String> outputListener, Consumer<String> errorListener) {
         String initSSHCommand = String.format("GIT_SSH_COMMAND='ssh -i %s -o StrictHostKeyChecking=no' %s init", terraformProcessData.getSshFile().getAbsolutePath(), terraformPath);
-        ProcessLauncher processLauncher = new ProcessLauncher(this.executor, "bash", "-c");
+        ProcessLauncher processLauncher = newLauncher(terraformProcessData, "bash", "-c");
         processLauncher.setInheritIO(this.isInheritIO());
         processLauncher.setDirectory(terraformProcessData.getWorkingDirectory());
 
@@ -462,9 +495,34 @@ public class TerraformClient implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        this.executor.shutdownNow();
-        if (!this.executor.awaitTermination(5, TimeUnit.SECONDS)) {
-            throw new RuntimeException("executor did not terminate");
+        this.closed = true;
+        // The processes have to be killed before the pool is shut down, because
+        // shutting the pool down cannot release the reader tasks on its own:
+        // they are blocked in BufferedReader.readLine() on the child's pipe, and
+        // that read does not respond to Thread.interrupt() (JDK-8169565, open
+        // since 2016). Only the child's death closes the write end and produces
+        // the EOF that lets the readers return.
+        // The terminations themselves are safe on an interrupted closing thread -
+        // they run on ProcessLauncher's own threads and clear the flag per task.
+        // What is not safe is awaitTermination() below, which throws instead of
+        // waiting and would report a shutdown failure that did not happen. Clear
+        // the flag for the duration; the caller's interruption is not ours to
+        // swallow, so restore it on the way out.
+        boolean wasInterrupted = Thread.interrupted();
+        try {
+            List<ProcessLauncher> orphans = ProcessLauncher.terminateAll(this.liveLaunchers, CLOSE_GRACE_PERIOD_SECONDS);
+            this.liveLaunchers.clear();
+            if (!orphans.isEmpty()) {
+                log.warn("{} terraform process(es) survived termination on close and are now orphaned", orphans.size());
+            }
+            this.executor.shutdownNow();
+            if (!this.executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                throw new RuntimeException("executor did not terminate");
+            }
+        } finally {
+            if (wasInterrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 }

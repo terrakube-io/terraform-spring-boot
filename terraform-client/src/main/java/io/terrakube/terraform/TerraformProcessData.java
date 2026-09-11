@@ -23,6 +23,14 @@ public class TerraformProcessData {
     boolean tofu = false;
     @Builder.Default
     boolean detailExitCode = false;
+    /**
+     * Maximum wall-clock time the terraform process is allowed to run, in
+     * seconds. Zero (the default) disables the timeout entirely; it must stay
+     * zero so that a patch upgrade of this library never starts killing the
+     * long-running applies of consumers that do not opt in.
+     */
+    @Builder.Default
+    long timeoutSeconds = 0;
     @Singular Map<String, String> terraformVariables;
     @Singular Map<String, String> terraformEnvironmentVariables;
 }
