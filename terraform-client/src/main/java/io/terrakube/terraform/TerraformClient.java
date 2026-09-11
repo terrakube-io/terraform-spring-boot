@@ -7,6 +7,7 @@ import org.apache.maven.artifact.versioning.ComparableVersion;
 import java.io.*;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.*;
 import java.util.function.*;
 
 @Builder
@@ -41,8 +42,14 @@ public class TerraformClient implements AutoCloseable {
     private static final long CLOSE_GRACE_PERIOD_SECONDS = 10;
 
     private final ExecutorService executor = Executors.newWorkStealingPool();
+    // Final with an initializer and no accessors on purpose: that is what keeps
+    // these two off the generated builder, off the all-args constructor and out
+    // of the published API. A plain volatile boolean for the flag gave Lombok a
+    // public setClosed(boolean), which let a caller re-open a closed client.
+    @Getter(AccessLevel.NONE)
     private final Set<ProcessLauncher> liveLaunchers = ConcurrentHashMap.newKeySet();
-    private volatile boolean closed;
+    @Getter(AccessLevel.NONE)
+    private final AtomicBoolean closed = new AtomicBoolean();
 
     private File workingDirectory;
     private boolean inheritIO;
@@ -242,7 +249,11 @@ public class TerraformClient implements AutoCloseable {
                 return CompletableFuture.completedFuture(-1);
             });
         }
-        return result.thenApply(i -> i > 0);
+        // Prune here too, not only when the next launcher registers: otherwise an
+        // idle client keeps the last job's launcher alive, and with it that job's
+        // ProcessBuilder environment and the listener closure over its output.
+        return result.thenApply(i -> i > 0)
+                .whenComplete((success, ex) -> this.liveLaunchers.removeIf(ProcessLauncher::hasExited));
     }
 
 
@@ -450,7 +461,7 @@ public class TerraformClient implements AutoCloseable {
         // concurrently can be missed and then cleared away. Re-check after the
         // add and refuse: launch() kills the process it just started and
         // rethrows, rather than leaving it running with nothing tracking it.
-        if (this.closed) {
+        if (this.closed.get()) {
             this.liveLaunchers.remove(launcher);
             throw new IllegalStateException("TerraformClient is closed");
         }
@@ -495,7 +506,7 @@ public class TerraformClient implements AutoCloseable {
 
     @Override
     public void close() throws Exception {
-        this.closed = true;
+        this.closed.set(true);
         // The processes have to be killed before the pool is shut down, because
         // shutting the pool down cannot release the reader tasks on its own:
         // they are blocked in BufferedReader.readLine() on the child's pipe, and

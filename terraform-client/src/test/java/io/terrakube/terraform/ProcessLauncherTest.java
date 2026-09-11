@@ -213,6 +213,60 @@ class ProcessLauncherTest {
     }
 
     /**
+     * Regression test for the invariant a previous contributor established and
+     * this feature initially broke on its own new path: the future a caller
+     * holds must never complete while the output listeners are still receiving
+     * output.
+     * <p>
+     * The success path enforces this by joining the reader tasks inside the
+     * supplier before returning the exit code (see
+     * outputIsFullyCapturedWhenExitCodeFutureCompletes, and
+     * terrakube-io/terrakube#3294 for the blank plan JSON it caused). The
+     * timeout path completes the future from a different thread and skips that
+     * supplier entirely, so it has to join the readers itself. Measured before
+     * the fix: 398 lines delivered when the future completed and 1216 more
+     * afterwards.
+     * <p>
+     * That matters more on the timeout path than on the success path, because
+     * consumers read their output buffer from the failure handler - a plain
+     * StringBuilder and ArrayList in Terrakube's case - so a still-running
+     * reader means truncated output or a ConcurrentModificationException.
+     * <p>
+     * The listener is deliberately slow (2ms a line) so the reader is certainly
+     * still delivering when the timeout fires, and the whole output fits in the
+     * pipe buffer so the writer is finished and only the listener is behind.
+     */
+    @Test
+    void timeoutDoesNotCompleteTheFutureWhileListenersAreStillReceivingOutput() throws Exception {
+        final int expectedLines = 2_000;
+        AtomicLong delivered = new AtomicLong();
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c", "seq 1 " + expectedLines + "; sleep 30");
+        launcher.setTimeoutSeconds(1);
+        launcher.setOutputListener(line -> {
+            try {
+                Thread.sleep(2);
+            } catch (InterruptedException ex) {
+                Thread.currentThread().interrupt();
+            }
+            delivered.incrementAndGet();
+        });
+        launcher.setErrorListener(line -> {
+        });
+        CompletableFuture<Integer> future = launcher.launch();
+
+        ExecutionException failure = assertThrows(ExecutionException.class,
+                () -> future.get(FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+        long deliveredAtCompletion = delivered.get();
+
+        assertInstanceOf(TimeoutException.class, failure.getCause());
+        assertEquals(expectedLines, deliveredAtCompletion,
+                "the listener should have received the whole output before the timed-out future completed");
+        Thread.sleep(1_000);
+        assertEquals(deliveredAtCompletion, delivered.get(),
+                "no output may reach the listener after the caller's future has completed");
+    }
+
+    /**
      * Regression test for backwards compatibility: the timeout is opt-in, so a
      * launcher left at the default of zero must never kill its process, however
      * long it runs. Consumers that do not set a timeout run terraform applies

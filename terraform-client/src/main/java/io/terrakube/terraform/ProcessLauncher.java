@@ -13,10 +13,18 @@ import java.util.stream.*;
 public final class ProcessLauncher {
     private static final long STREAM_DRAIN_TIMEOUT_SECONDS = 60;
     private static final long FORCIBLE_EXIT_TIMEOUT_SECONDS = 5;
-    // Slack on the invokeAll bound below. Without it the deadline equals the
-    // exact worst case of the task it bounds, so a task still in its
-    // post-SIGKILL confirmation waitFor() is cancelled on the boundary and
-    // reported as a false orphan.
+    // Budget for draining the readers on the timeout path, shared across both
+    // streams. The process is dead by then, so what is left is the pipe buffer
+    // (~64 KB) being handed to the listeners: the overrun this exists to absorb
+    // measured ~1200 lines. Not STREAM_DRAIN_TIMEOUT_SECONDS, which is a 60s
+    // safety net for a wedged reader on the success path and far too long to sit
+    // inside a termination.
+    private static final long TERMINATED_STREAM_DRAIN_TIMEOUT_SECONDS = 10;
+    // Slack on the invokeAll bound below, so the deadline is not exactly the
+    // worst case of the task it bounds. The payoff is small - the orphan verdict
+    // is a live isAlive() check, so a boundary cancellation only mis-reports in
+    // the moment between SIGKILL and reaping - but the arithmetic is clearer
+    // with it than without.
     private static final long TERMINATION_SLACK_SECONDS = 1;
     static final long GRACE_PERIOD_SECONDS = 10;
 
@@ -189,8 +197,21 @@ public final class ProcessLauncher {
         return result
                 .orTimeout(this.timeoutSeconds, TimeUnit.SECONDS)
                 .whenCompleteAsync((code, ex) -> {
-                    if (ex instanceof TimeoutException && !this.terminate(GRACE_PERIOD_SECONDS)) {
-                        log.warn("Timed out process {} could not be terminated and may be orphaned", this.builder.command());
+                    if (ex instanceof TimeoutException) {
+                        if (!this.terminate(GRACE_PERIOD_SECONDS)) {
+                            log.warn("Timed out process {} could not be terminated and may be orphaned", this.builder.command());
+                        }
+                        // The supplier above joins the readers before completing,
+                        // so the success path never hands a caller an exit code
+                        // while its listeners are still receiving output. This
+                        // path completes the future instead of running that
+                        // supplier to the end, so it has to join them here or it
+                        // reintroduces terrakube-io/terrakube#3294 - a consumer
+                        // reading its output buffer from the failure handler
+                        // would see it truncated, or being mutated as it reads.
+                        long drainBy = System.nanoTime() + TimeUnit.SECONDS.toNanos(TERMINATED_STREAM_DRAIN_TIMEOUT_SECONDS);
+                        this.awaitTerminatedStreamDrained(outputDone, "output", drainBy);
+                        this.awaitTerminatedStreamDrained(errorDone, "error", drainBy);
                     }
                     // terminate() restores the interrupt flag for its caller's
                     // benefit; clear it again so a pooled thread does not carry
@@ -269,17 +290,16 @@ public final class ProcessLauncher {
     static List<ProcessLauncher> terminateAll(Collection<ProcessLauncher> launchers, long gracePeriodSeconds) {
         List<Callable<Boolean>> terminations = launchers.stream()
                 .map(launcher -> (Callable<Boolean>) () -> {
-                    // Start from a clean flag rather than trusting whoever used
-                    // this worker last: a cancel(true) at the invokeAll deadline
-                    // is delivered after the previous task's finally has run, and
-                    // neither FutureTask nor the pool clears it.
-                    Thread.interrupted();
                     try {
                         return launcher.terminate(gracePeriodSeconds);
                     } finally {
-                        // Clear the flag terminate() restores, so it neither
-                        // reaches an unrelated task on this pooled thread nor a
-                        // sibling termination.
+                        // Clear the flag terminate() restores, so it does not
+                        // reach a sibling termination or a later task on this
+                        // thread. There is no matching clear on entry because
+                        // ThreadPoolExecutor.runWorker() already clears the flag
+                        // before each task while the pool is not stopping, and
+                        // TERMINATOR is never shut down - which is also why the
+                        // timeout lambda in launch() needs no entry clear.
                         Thread.interrupted();
                     }
                 })
@@ -299,6 +319,26 @@ public final class ProcessLauncher {
      */
     boolean hasExited() {
         return this.process == null || !this.process.isAlive();
+    }
+
+    /**
+     * Waits for a reader to finish delivering output to its listener, on the
+     * timeout path. Never throws: the caller is already being handed a
+     * {@link TimeoutException} and a wedged reader must not replace it, only be
+     * visible in the log.
+     */
+    private void awaitTerminatedStreamDrained(Future<Boolean> drained, String streamName, long deadlineNanos) {
+        if (drained == null) {
+            return;
+        }
+        try {
+            drained.get(Math.max(deadlineNanos - System.nanoTime(), 0), TimeUnit.NANOSECONDS);
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+        } catch (ExecutionException | TimeoutException ex) {
+            log.warn("The {} stream of timed out process {} did not finish draining; its output may be incomplete",
+                    streamName, this.builder.command());
+        }
     }
 
     private void awaitStreamDrained(Future<Boolean> drained, String streamName) throws InterruptedException {
