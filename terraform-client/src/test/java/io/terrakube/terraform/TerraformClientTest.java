@@ -4,10 +4,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.api.io.TempDir;
 
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -25,6 +27,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * plain bash subprocesses through the package-private launcher factory - going
  * through plan()/apply() would download a terraform release - and that factory
  * is the single funnel every command path goes through.
+ * <p>
+ * The multi-launcher test attaches no output listeners, and that is deliberate
+ * rather than lazy. launch() only submits the two stream reader tasks when a
+ * listener is set, and those readers block on the child's pipe for as long as it
+ * lives, so each live launcher costs three tasks on the client's work-stealing
+ * pool - whose parallelism is availableProcessors(). Three concurrent launchers
+ * is nine tasks: that saturates a 4-core runner and the last launcher's reader
+ * is never scheduled. It needs none of the child's output, so the readers are
+ * simply never created, and its readiness is signalled through the filesystem
+ * for the same reason.
+ * <p>
+ * The single-launcher tests do keep their listeners. Three tasks fit, and
+ * dropping them there would lose the only coverage of close() running against
+ * readers genuinely blocked in readLine() on a live pipe.
  */
 @DisabledOnOs(OS.WINDOWS)
 class TerraformClientTest {
@@ -75,6 +91,12 @@ class TerraformClientTest {
     void closeTerminatesLaunchersThatAreStillRunning() throws Exception {
         TerraformClient client = TerraformClient.builder().build();
         ProcessLauncher launcher = client.newLauncher(processData(0), "bash", "-c", "exec sleep 30");
+        // Listeners on purpose, despite the note in the class comment: this is
+        // the test that has to exercise close() against readers actually blocked
+        // in readLine() on a live pipe, which is the whole reason close() kills
+        // the children before shutting the pool down. One launcher is three pool
+        // tasks, which fits, and the child writes nothing so an unscheduled
+        // reader just waits on an empty pipe.
         launcher.setOutputListener(line -> {
         });
         launcher.setErrorListener(line -> {
@@ -110,25 +132,23 @@ class TerraformClientTest {
      * not ours to swallow.
      */
     @Test
-    void closeTerminatesEveryLauncherInParallelEvenWhenInterrupted() throws Exception {
+    void closeTerminatesEveryLauncherInParallelEvenWhenInterrupted(@TempDir Path readinessDir) throws Exception {
         TerraformClient client = TerraformClient.builder().build();
         List<ProcessLauncher> launchers = new ArrayList<>();
         for (int i = 0; i < 3; i++) {
-            List<String> output = Collections.synchronizedList(new ArrayList<>());
-            // A busy loop, not a backgrounded sleep the parent waits on: the
-            // descendant sweep would otherwise end the parent on its own and the
-            // hasExited() assertions could pass without the forcible kill.
-            ProcessLauncher launcher = client.newLauncher(processData(0),
-                    "bash", "-c", "trap '' TERM; echo ready; while true; do sleep 1; done");
-            launcher.setOutputListener(output::add);
-            launcher.setErrorListener(line -> {
-            });
+            Path marker = readinessDir.resolve("ready-" + i);
+            // Readiness through the filesystem, not stdout: reading stdout needs a
+            // worker on the very pool these launchers are filling up, so the third
+            // child's line would never be delivered on a 4-core runner. touch runs
+            // after the trap builtin, so the marker still proves the trap is
+            // installed. A busy loop rather than a backgrounded sleep the parent
+            // waits on, because the descendant sweep would otherwise end the parent
+            // on its own and the hasExited() assertions could pass without the
+            // forcible kill.
+            ProcessLauncher launcher = client.newLauncher(processData(0), "bash", "-c",
+                    "trap '' TERM; touch \"" + marker + "\"; while true; do sleep 1; done");
             launcher.launch();
-            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
-            while (!output.contains("ready") && System.nanoTime() < deadline) {
-                Thread.sleep(20);
-            }
-            assertTrue(output.contains("ready"), "launcher " + i + " should have installed its trap");
+            await(() -> Files.exists(marker), "launcher " + i + " should have installed its trap");
             launchers.add(launcher);
         }
 
@@ -172,5 +192,13 @@ class TerraformClientTest {
                     "the per-job timeout should have expired, got " + failure.getCause());
             assertTrue(launcher.hasExited());
         }
+    }
+
+    private static void await(java.util.function.BooleanSupplier condition, String message) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
+            Thread.sleep(20);
+        }
+        assertTrue(condition.getAsBoolean(), message);
     }
 }
