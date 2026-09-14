@@ -41,7 +41,25 @@ public class TerraformClient implements AutoCloseable {
     // spend". They happen to agree today.
     private static final long CLOSE_GRACE_PERIOD_SECONDS = 10;
 
-    private final ExecutorService executor = Executors.newWorkStealingPool();
+    private static final AtomicInteger CLIENT_THREAD_COUNT = new AtomicInteger();
+
+    // A cached pool, not newWorkStealingPool(). Every task submitted here is
+    // blocking I/O - two pipe readers and a waitFor() per command - and a
+    // ForkJoinPool sized to availableProcessors() only grows workers for a
+    // ManagedBlocker, which neither readLine() nor waitFor() is. So N concurrent
+    // commands need 3N blocked threads and can never have more than
+    // availableProcessors(): measured on 4 cores, the second concurrent command
+    // already has a starved reader, and once that reader's pipe buffer fills the
+    // child itself blocks on write and stops making progress. A cached pool
+    // grows to the blocking work and reaps idle threads after 60s.
+    private final ExecutorService executor = Executors.newCachedThreadPool(runnable -> {
+        Thread thread = new Thread(runnable, "terraform-client-" + CLIENT_THREAD_COUNT.incrementAndGet());
+        // Daemon, as ForkJoinPool's workers were, so the library never holds JVM
+        // exit open. Pinned classloader for the same reason as TERMINATOR's.
+        thread.setDaemon(true);
+        thread.setContextClassLoader(TerraformClient.class.getClassLoader());
+        return thread;
+    });
     // Final with an initializer and no accessors on purpose: that is what keeps
     // these two off the generated builder, off the all-args constructor and out
     // of the published API. A plain volatile boolean for the flag gave Lombok a

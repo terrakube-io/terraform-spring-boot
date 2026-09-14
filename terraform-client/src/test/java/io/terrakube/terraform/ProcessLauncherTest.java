@@ -19,6 +19,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
@@ -30,7 +31,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 @DisabledOnOs(OS.WINDOWS)
 class ProcessLauncherTest {
 
-    private static final ExecutorService POOL = Executors.newWorkStealingPool();
+    private static final AtomicInteger POOL_THREADS = new AtomicInteger();
+
+    // Cached, not work-stealing, for the same reason the client's own pool is:
+    // every task here is blocking I/O, and a ForkJoinPool sized to
+    // availableProcessors() cannot run more than that many blocked tasks, so
+    // errorStreamIsFullyCapturedWhenExitCodeFutureCompletes below deadlocks at
+    // one core. Daemon threads only to preserve what this pool already had:
+    // ForkJoinPool's workers are daemon, Executors.defaultThreadFactory()'s
+    // are not.
+    private static final ExecutorService POOL = Executors.newCachedThreadPool(runnable -> {
+        Thread thread = new Thread(runnable, "process-launcher-test-" + POOL_THREADS.incrementAndGet());
+        thread.setDaemon(true);
+        return thread;
+    });
     private static final long FUTURE_TIMEOUT_SECONDS = 30;
 
     /**
