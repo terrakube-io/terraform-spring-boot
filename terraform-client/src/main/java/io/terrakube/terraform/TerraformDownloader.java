@@ -28,7 +28,12 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
@@ -44,35 +49,65 @@ public class TerraformDownloader {
     public static final String TERRAFORM_RELEASES_URL = "https://releases.hashicorp.com/terraform/index.json";
     public static final String TOFU_RELEASES_URL = "https://api.github.com/repos/opentofu/opentofu/releases";
 
-    private TerraformResponse terraformReleases;
-    private List<TofuRelease> tofuReleases;
+    // Cache duration for the release list, shared by all downloaders per process so consecutive commands no longer re-fetch the list every time.
+    // This along with the cache also means we can fall back on the cached list if we hit the rate limit, so it should help fix a bunch of rate limit issues
+    private static final Duration RELEASES_CACHE_TTL = Duration.ofMinutes(30);
+    private static final Duration RELEASES_RETRY_AFTER_FAILURE = Duration.ofMinutes(1);
+
+    private static final ConcurrentMap<String, CachedReleases<?>> RELEASES_CACHE = new ConcurrentHashMap<>();
+    private static final ConcurrentMap<String, Object> RELEASES_LOCKS = new ConcurrentHashMap<>();
+    
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
+    // Makes sure we only cache the binaries for exactly specified versions, not for ranges
+    private static final Pattern EXACT_VERSION = Pattern.compile("^v?\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.+-]+)?$");
+
+    private final String terraformReleasesUrl;
+    private final String tofuReleasesUrl;
     private File terraformDownloadDirectory;
 
     private File tofuDownloadDirectory;
     private File terraformDirectory;
     private String userHomeDirectory;
-    private ObjectMapper objectMapper = new ObjectMapper();
+
+    private static final class CachedReleases<T> {
+        private final T releases;
+        private final Instant expiresAt;
+
+        CachedReleases(T releases, Instant expiresAt) {
+            this.releases = releases;
+            this.expiresAt = expiresAt;
+        }
+
+        T releases() {
+            return releases;
+        }
+
+        boolean isFresh() {
+            return Instant.now().isBefore(expiresAt);
+        }
+    }
+
+    @FunctionalInterface
+    private interface ReleasesParser<T> {
+        T parse(File releasesFile) throws IOException;
+    }
 
     public TerraformDownloader() {
-        try {
-            log.info("Initialize Terraform and Tofu Downloader using default URL");
-            createDownloadTempDirectory();
-            createDownloadTofuTempDirectory();
-            getTerraformReleases(TERRAFORM_RELEASES_URL);
-            getTofuReleases(TOFU_RELEASES_URL);
-        } catch (IOException ex) {
-            log.error(ex.getMessage());
-        }
+        this(TERRAFORM_RELEASES_URL, TOFU_RELEASES_URL);
     }
 
     public TerraformDownloader(String terraformReleasesUrl, String tofuReleasesUrl) {
         log.info("Initialize TerraformDownloader using custom URL");
+        log.debug("Terraform releases URL: {}", terraformReleasesUrl);
+        log.debug("Tofu releases URL: {}", tofuReleasesUrl);
+
+        this.terraformReleasesUrl = terraformReleasesUrl;
+        this.tofuReleasesUrl = tofuReleasesUrl;
 
         try {
             createDownloadTempDirectory();
             createDownloadTofuTempDirectory();
-            getTerraformReleases(terraformReleasesUrl);
-            getTofuReleases(tofuReleasesUrl);
         } catch (IOException ex) {
             log.error(ex.getMessage());
         }
@@ -120,50 +155,82 @@ public class TerraformDownloader {
         log.info("Validate/Create tofu directory: {}", tofuVersionPath);
     }
 
-    private void getTerraformReleases(String terraformReleasesUrl) throws IOException {
-        log.info("Downloading terraform releases list");
-        try {
-            Path path = Paths.get(FileUtils.getTempDirectory().getAbsolutePath(), UUID.randomUUID().toString());
-            String tmpdir = Files.createDirectories(path).toFile().getAbsolutePath() + "/terraform-releases.json";
-            log.info("Downloading terraform releases to {}", tmpdir);
-            File terraformReleasesFile = new File(tmpdir);
-            downloadReleasesToFile(terraformReleasesUrl, terraformReleasesFile);
-            log.info("Downloaded terraform releases completed");
-            this.terraformReleases = objectMapper.readValue(FileUtils.readFileToString(new File(tmpdir), "UTF-8"), TerraformResponse.class);
-            log.info("Parsing terraform releases completed");
-            Files.deleteIfExists(terraformReleasesFile.toPath());
-            log.info("Deleting temporary files completed");
-        } catch (Exception e) {
-            log.error("Error fetching terraform releases {}", e.getMessage());
-        }
-
-        assert this.terraformReleases != null;
-        log.info("Found {} terraform releases", this.terraformReleases.getVersions().size());
+    private TerraformResponse getTerraformReleases() {
+        return getCachedReleases("terraform", terraformReleasesUrl, releasesFile -> {
+            TerraformResponse response = OBJECT_MAPPER.readValue(releasesFile, TerraformResponse.class);
+            if (response == null || response.getVersions() == null) {
+                throw new IOException("Terraform releases response has no versions");
+            }
+            log.info("Found {} terraform releases", response.getVersions().size());
+            return response;
+        });
     }
 
-    private void getTofuReleases(String tofuReleasesUrl) throws IOException {
-        log.info("Downloading tofu releases list");
-
-        Path path = Paths.get(FileUtils.getTempDirectory().getAbsolutePath(), UUID.randomUUID().toString());
-        String tmpdir = Files.createDirectories(path).toFile().getAbsolutePath() + "/tofu-releases.json";
-        log.info("Downloading tofu releases to {}", tmpdir);
-        File tofuReleasesFile = new File(tmpdir);
-
-        try {
-            downloadReleasesToFile(tofuReleasesUrl, tofuReleasesFile);
-            log.info("Downloaded tofu releases completed");
-            this.tofuReleases = objectMapper.readValue(FileUtils.readFileToString(new File(tmpdir), "UTF-8"),
-                    objectMapper.getTypeFactory().constructCollectionType(List.class, TofuRelease.class));
-
-            log.info("Parsing tofu releases completed");
-            Files.deleteIfExists(tofuReleasesFile.toPath());
-            log.info("Deleting temporary tofu files completed");
-
-        } catch (Exception e) {
-            log.error("Error fetching tofu releases {}", e.getMessage());
-        }
-        log.info("Found {} tofu releases", this.tofuReleases.size());
+    private List<TofuRelease> getTofuReleases() {
+        return getCachedReleases("tofu", tofuReleasesUrl, releasesFile -> {
+            List<TofuRelease> releases = OBJECT_MAPPER.readValue(releasesFile,
+                    OBJECT_MAPPER.getTypeFactory().constructCollectionType(List.class, TofuRelease.class));
+            if (releases == null) {
+                throw new IOException("Tofu releases response is empty");
+            }
+            log.info("Found {} tofu releases", releases.size());
+            return releases;
+        });
     }
+
+    @SuppressWarnings("unchecked")
+    private static <T> T getCachedReleases(String product, String releasesUrl, ReleasesParser<T> parser) {
+        String key = product + "|" + releasesUrl;
+        CachedReleases<T> cached = (CachedReleases<T>) RELEASES_CACHE.get(key);
+        if (cached != null && cached.isFresh()) {
+            return cached.releases();
+        }
+
+        synchronized (RELEASES_LOCKS.computeIfAbsent(key, k -> new Object())) {
+            // Another thread may have refreshed the list while this one was waiting.
+            // This should fix a potential upstream race condition in terrakube-controller where the key might expire between checking the key and retrieving the key
+            cached = (CachedReleases<T>) RELEASES_CACHE.get(key);
+            if (cached != null && cached.isFresh()) {
+                return cached.releases();
+            }
+
+            try {
+                T releases = fetchReleases(product, releasesUrl, parser);
+                RELEASES_CACHE.put(key, new CachedReleases<>(releases, Instant.now().plus(RELEASES_CACHE_TTL)));
+                return releases;
+            } catch (Exception e) {
+                if (cached != null) {
+                    log.warn("Error fetching {} releases from {}, using the previous list: {}", product, releasesUrl, e.getMessage());
+                    RELEASES_CACHE.put(key, new CachedReleases<>(cached.releases(), Instant.now().plus(RELEASES_RETRY_AFTER_FAILURE)));
+                    return cached.releases();
+                }
+                throw new IllegalStateException(String.format("Unable to fetch %s releases from %s", product, releasesUrl), e);
+            }
+        }
+    }
+
+    private static <T> T fetchReleases(String product, String releasesUrl, ReleasesParser<T> parser) throws IOException {
+        log.info("Downloading {} releases list from {}", product, releasesUrl);
+        Path tempDirectory = Files.createDirectories(
+                Paths.get(FileUtils.getTempDirectory().getAbsolutePath(), UUID.randomUUID().toString()));
+        try {
+            File releasesFile = tempDirectory.resolve(product + "-releases.json").toFile();
+            downloadReleasesToFile(releasesUrl, releasesFile);
+            return parser.parse(releasesFile);
+        } finally {
+            FileUtils.deleteQuietly(tempDirectory.toFile());
+        }
+    }
+
+    // For the tests
+    static void clearReleasesCache() {
+        RELEASES_CACHE.clear();
+    }
+
+    static void expireReleasesCache() {
+        RELEASES_CACHE.replaceAll((key, cached) -> new CachedReleases<Object>(cached.releases(), Instant.EPOCH));
+    }
+    // End tests
 
     private static void downloadReleasesToFile(String releasesUrl, File releasesFile) {
         WebClient webClient = WebClient.builder()
@@ -193,70 +260,101 @@ public class TerraformDownloader {
 
     private String downloadFileOrReturnPathIfAlreadyExists(String fileName, String zipReleaseUrl, String version,
                                                            boolean tofu) throws IOException {
-        String downloadPath = tofu ? TOFU_DOWNLOAD_DIRECTORY : TERRAFORM_DOWNLOAD_DIRECTORY;
-        String path = tofu ? TOFU_DIRECTORY : TERRAFORM_DIRECTORY;
         String product = tofu ? "tofu" : "terraform";
         File downloadDirectory = tofu ? this.tofuDownloadDirectory : this.terraformDownloadDirectory;
+        File binaryFile = new File(getTerraformBinaryPath(version, tofu));
 
-        if (!FileUtils.directoryContains(downloadDirectory, new File(
-                this.userHomeDirectory.concat(
-                        FilenameUtils.separatorsToSystem(
-                                downloadPath.concat("/").concat(fileName)))))) {
+        // Check if the binary is present instead of the zip file
+        if (isUsableBinary(binaryFile)) {
+            log.info("{} {} already installed at {}", product, version, binaryFile);
+            return binaryFile.getAbsolutePath();
+        }
 
-            log.info("Downloading {} from: {}", product, zipReleaseUrl);
+        File zipFile = new File(downloadDirectory, fileName);
+        if (zipFile.isFile() && zipFile.length() > 0) {
+            log.info("{} {} binary missing, extracting existing archive {}", product, version, zipFile);
             try {
-                File zipFile = new File(
-                        this.userHomeDirectory.concat(
-                                FilenameUtils.separatorsToSystem(
-                                        downloadPath.concat(fileName)
-                                )));
-
-                WebClient webClient = WebClient.builder()
-                        .clientConnector(new ReactorClientHttpConnector(
-                                HttpClient.create()
-                                        .followRedirect(true)
-                                        .proxyWithSystemProperties()
-                        ))
-                        .defaultHeaders(h -> {
-                            h.add("User-Agent", "terraform-downloader");
-                            h.setAccept(List.of(MediaType.APPLICATION_OCTET_STREAM, MediaType.ALL));
-                        })
-                        .build();
-
-                Path filePath = zipFile.toPath();
-
-                webClient.get()
-                        .uri(zipReleaseUrl)
-                        .retrieve()
-                        .onStatus(
-                                status -> !status.is2xxSuccessful(),
-                                clientResponse -> clientResponse.createException().flatMap(Mono::error)
-                        )
-                        .bodyToFlux(DataBuffer.class)
-                        .as(dataBufferFlux -> DataBufferUtils.write(dataBufferFlux, filePath))
-                        .then()
-                        .block();
-
-                if (tofu) {
-                    return unzipTofuVersion(version, zipFile);
-                } else {
-                    return unzipTerraformVersion(version, zipFile);
-                }
-
-            } catch (IOException exception) {
-                throw new IOException("Unable to download ".concat(zipReleaseUrl));
+                return unzipVersion(version, zipFile, tofu);
+            } catch (IOException e) {
+                log.warn("Existing {} archive {} is not usable, downloading it again: {}", product, zipFile, e.getMessage());
+                FileUtils.deleteQuietly(zipFile);
             }
-        } else {
-            log.info("{} {} already exists", fileName, product);
+        }
 
-            return this.userHomeDirectory.concat(
-                    FilenameUtils.separatorsToSystem(
-                            path.concat(version.concat("/").concat(product))
+        log.info("Downloading {} from: {}", product, zipReleaseUrl);
+        WebClient webClient = WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(
+                        HttpClient.create()
+                                .followRedirect(true)
+                                .proxyWithSystemProperties()
+                ))
+                .defaultHeaders(h -> {
+                    h.add("User-Agent", "terraform-downloader");
+                    h.setAccept(List.of(MediaType.APPLICATION_OCTET_STREAM, MediaType.ALL));
+                })
+                .build();
+
+        try {
+            webClient.get()
+                    .uri(zipReleaseUrl)
+                    .retrieve()
+                    .onStatus(
+                            status -> !status.is2xxSuccessful(),
+                            clientResponse -> clientResponse.createException().flatMap(Mono::error)
                     )
-            );
+                    .bodyToFlux(DataBuffer.class)
+                    .as(dataBufferFlux -> DataBufferUtils.write(dataBufferFlux, zipFile.toPath()))
+                    .then()
+                    .block();
+        } catch (RuntimeException exception) {
+            // A partial archive would otherwise be picked up as an existing archive next time.
+            FileUtils.deleteQuietly(zipFile);
+            throw new IOException("Unable to download ".concat(zipReleaseUrl), exception);
+        }
+
+        try {
+            return unzipVersion(version, zipFile, tofu);
+        } catch (IOException exception) {
+            FileUtils.deleteQuietly(zipFile);
+            throw new IOException("Unable to extract ".concat(zipReleaseUrl), exception);
         }
     }
 
+    private String unzipVersion(String version, File zipFile, boolean tofu) throws IOException {
+        if (tofu) {
+            unzipTofuVersion(version, zipFile);
+        } else {
+            unzipTerraformVersion(version, zipFile);
+        }
+
+        File binaryFile = new File(getTerraformBinaryPath(version, tofu));
+        if (!isUsableBinary(binaryFile)) {
+            throw new IOException(String.format("Archive %s did not contain a usable %s binary", zipFile, tofu ? "tofu" : "terraform"));
+        }
+        return binaryFile.getAbsolutePath();
+    }
+
+    private Optional<String> findInstalledBinary(String version, boolean tofu) {
+        if (version == null || !EXACT_VERSION.matcher(version.trim()).matches()) {
+            return Optional.empty();
+        }
+        File binaryFile = new File(getTerraformBinaryPath(version.trim(), tofu));
+        if (isUsableBinary(binaryFile)) {
+            log.info("{} {} already installed at {}", tofu ? "tofu" : "terraform", version, binaryFile);
+            return Optional.of(binaryFile.getAbsolutePath());
+        }
+        return Optional.empty();
+    }
+
+    private static boolean isUsableBinary(File binaryFile) {
+        if (!binaryFile.isFile() || binaryFile.length() == 0) {
+            return false;
+        }
+        if (!binaryFile.canExecute() && !binaryFile.setExecutable(true, true)) {
+            return false;
+        }
+        return binaryFile.canExecute();
+    }
 
     private boolean doSystemAndReleaseMatch(String arch, String os) {
         return arch.equals(this.getArch()) && os.equals(this.getOs());
@@ -267,10 +365,10 @@ public class TerraformDownloader {
      * concrete version string (e.g. "1.5.7") without downloading anything.
      */
     public String resolveTerraformVersion(String terraformVersion) {
+        Set<String> allTerraformKeys = getTerraformReleases().getVersions().keySet();
         try {
             RangeList versionRangeList = RangeListFactory.create(terraformVersion);
 
-            Set<String> allTerraformKeys = terraformReleases.getVersions().keySet();
             return allTerraformKeys.stream()
                     .filter(v -> {
                         try {
@@ -307,10 +405,15 @@ public class TerraformDownloader {
     }
 
     public String downloadTerraformVersion(String terraformVersion) throws IOException {
+        Optional<String> installedBinary = findInstalledBinary(terraformVersion, false);
+        if (installedBinary.isPresent()) {
+            return installedBinary.get();
+        }
+
         log.info("Downloading terraform version \" {} \" architecture {} Type {}", terraformVersion, SystemUtils.OS_ARCH, SystemUtils.OS_NAME);
         terraformVersion = resolveTerraformVersion(terraformVersion);
         log.info("Terraform version is \" {} \"", terraformVersion);
-        TerraformVersion version = terraformReleases.getVersions().get(terraformVersion);
+        TerraformVersion version = getTerraformReleases().getVersions().get(terraformVersion);
         boolean notFound = true;
         String terraformFilePath = "";
         if (version == null) {
@@ -338,7 +441,7 @@ public class TerraformDownloader {
      * downloading anything.
      */
     public String resolveTofuVersion(String tofuVersion) {
-        Set<String> allTofuKeys = tofuReleases.stream().map(TofuRelease::getName).collect(Collectors.toSet());
+        Set<String> allTofuKeys = getTofuReleases().stream().map(TofuRelease::getName).collect(Collectors.toSet());
         try {
             RangeList versionRangeList = RangeListFactory.create(tofuVersion);
 
@@ -360,20 +463,21 @@ public class TerraformDownloader {
     }
 
     public String downloadTofuVersion(String tofuVersion) throws IOException {
+        Optional<String> installedBinary = findInstalledBinary(tofuVersion, true);
+        if (installedBinary.isPresent()) {
+            return installedBinary.get();
+        }
+
         log.info("Downloading tofu version {} architecture {} Type {}", tofuVersion, SystemUtils.OS_ARCH,
                 SystemUtils.OS_NAME);
 
         String defaultFileName = "tofu_%s_%s_%s.zip";
 
-        //Extracting only the relase name, for example: 1.8.0
-        Set<String> allTofuKeys = tofuReleases.stream().map(TofuRelease::getName).collect(Collectors.toSet());
-        log.info("All tofu releases: {}", allTofuKeys);
-
         tofuVersion = resolveTofuVersion(tofuVersion);
 
         log.info("Tofu version is \" {} \"", tofuVersion);
         String finalTofuVersion = tofuVersion;
-        List<TofuRelease> releases = tofuReleases.stream()
+        List<TofuRelease> releases = getTofuReleases().stream()
                 .filter(release -> release.getName().equals(finalTofuVersion))
                 .toList();
 
