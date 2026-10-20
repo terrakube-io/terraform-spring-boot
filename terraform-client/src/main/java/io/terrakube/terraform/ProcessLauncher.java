@@ -140,6 +140,14 @@ public final class ProcessLauncher {
         }
     }
 
+    List<String> getCommands() {
+        return Collections.unmodifiableList(this.builder.command());
+    }
+
+    Map<String, String> getEnvironment() {
+        return Collections.unmodifiableMap(this.builder.environment());
+    }
+
     /**
      * Starts the process and returns a future that completes with its exit
      * code once the output listeners have received the complete output.
@@ -283,10 +291,26 @@ public final class ProcessLauncher {
         // against 3/3 clean shutdowns with toHandle().destroy(). ProcessHandleImpl
         // holds only a pid and a start time, so it has no streams to close. Neither
         // javadoc documents any of this. Do not "simplify" this back to
-        // process.destroy().
-        ProcessHandle target = this.isolated
-                ? handle.children().findFirst().orElse(handle)
-                : handle;
+        ProcessHandle target = handle;
+        if (this.isolated) {
+            // Under PID isolation, this.process is the `unshare` binary which ignores SIGTERM.
+            // unshare --fork forks the init shim (/bin/sh) as its direct child.
+            // If terminate() is called immediately after launch(), unshare may still be in the process of forking.
+            long waitStart = System.nanoTime();
+            while (handle.isAlive() && handle.children().findFirst().isEmpty()
+                    && TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - waitStart) < 200) {
+                try {
+                    Thread.sleep(10);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+            target = handle.children().findFirst().orElse(handle);
+            if (target != handle) {
+                handle.children().forEach(ProcessHandle::destroy);
+            }
+        }
         target.destroy();
         try {
             if (!this.process.waitFor(gracePeriodSeconds, TimeUnit.SECONDS)) {

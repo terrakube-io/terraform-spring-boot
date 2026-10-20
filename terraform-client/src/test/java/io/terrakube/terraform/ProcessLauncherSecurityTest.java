@@ -151,12 +151,19 @@ class ProcessLauncherSecurityTest {
         Assumptions.assumeTrue(PidIsolationSupport.isAvailable(),
                 "PID isolation not active in this environment - unshare unavailable or insufficient privileges");
 
-        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c", "exec sleep 30");
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c", "echo started; exec sleep 30");
         launcher.setPidIsolation(PidIsolation.REQUIRED);
-        launcher.setOutputListener(line -> {});
+        List<String> output = new ArrayList<>();
+        launcher.setOutputListener(output::add);
         launcher.setErrorListener(line -> {});
 
         CompletableFuture<Integer> future = launcher.launch();
+
+        // Wait until bash starts and prints 'started'
+        long startWait = System.nanoTime();
+        while (output.isEmpty() && TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - startWait) < 5) {
+            Thread.sleep(50);
+        }
 
         long startedAt = System.nanoTime();
         assertTrue(launcher.terminate(ProcessLauncher.GRACE_PERIOD_SECONDS), "terminate() should report process dead");

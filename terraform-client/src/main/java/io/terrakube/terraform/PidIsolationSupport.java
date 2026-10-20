@@ -90,7 +90,15 @@ final class PidIsolationSupport {
         cmd.add("exit 0");
         Process p = null;
         try {
-            p = new ProcessBuilder(cmd).start();
+            ProcessBuilder pb = new ProcessBuilder(cmd);
+            String path = pb.environment().get("PATH");
+            pb.environment().clear();
+            if (path != null) {
+                pb.environment().put("PATH", path);
+            }
+            pb.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            pb.redirectError(ProcessBuilder.Redirect.DISCARD);
+            p = pb.start();
             boolean finished = p.waitFor(2, TimeUnit.SECONDS);
             return finished && p.exitValue() == 0;
         } catch (Exception e) {

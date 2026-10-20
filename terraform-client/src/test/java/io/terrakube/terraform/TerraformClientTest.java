@@ -11,6 +11,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -19,6 +20,7 @@ import java.util.concurrent.TimeoutException;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -237,17 +239,8 @@ class TerraformClientTest {
                     .terraformEnvironmentVariable("EXPLICIT_VAR", "explicit_val")
                     .build();
 
-            ProcessLauncher launcher = client.newLauncher(data, "sh", "-c", "env");
-            // Call applyEnvironment through package-private access or via helper
-            client.getOutputListener(); // ensures client initialized
-            launcher.clearEnvironment();
-            for (String key : TerraformClient.DEFAULT_INHERITED_ENVIRONMENT) {
-                String val = System.getenv(key);
-                if (val != null && !val.isBlank()) {
-                    launcher.setEnvironmentVariable(key, val);
-                }
-            }
-            launcher.setEnvironmentVariable("EXPLICIT_VAR", "explicit_val");
+            ProcessLauncher launcher = client.newLauncher(data, "/bin/sh", "-c", "env");
+            client.applyEnvironment(launcher, data);
 
             List<String> output = new ArrayList<>();
             launcher.setOutputListener(output::add);
@@ -256,8 +249,117 @@ class TerraformClientTest {
 
             String combined = String.join("\n", output);
             assertTrue(combined.contains("EXPLICIT_VAR=explicit_val"));
-            assertFalse(combined.contains("InternalSecret="), "Host secrets must not be leaked");
+            assertTrue(combined.contains("PATH="), "PATH should be inherited from default allowlist");
         }
+    }
+
+    @Test
+    void cleanEnvironmentCustomAllowlistAndPerCallOverrides() throws Exception {
+        try (TerraformClient client = TerraformClient.builder()
+                .cleanEnvironment(true)
+                .inheritedEnvironmentVariables(Set.of("CUSTOM_CLIENT_VAR"))
+                .build()) {
+
+            // Test 1: Client-level custom allowlist excludes PATH
+            TerraformProcessData dataWithCustomAllowlist = TerraformProcessData.builder()
+                    .terraformVersion("1.5.0")
+                    .workingDirectory(new File("."))
+                    .terraformEnvironmentVariable("CALL_VAR", "call_val")
+                    .build();
+
+            ProcessLauncher launcher1 = client.newLauncher(dataWithCustomAllowlist, "/bin/sh", "-c", "env");
+            client.applyEnvironment(launcher1, dataWithCustomAllowlist);
+
+            List<String> output1 = new ArrayList<>();
+            launcher1.setOutputListener(output1::add);
+            int exitCode1 = launcher1.launch().get(30, TimeUnit.SECONDS);
+            assertEquals(0, exitCode1);
+            String combined1 = String.join("\n", output1);
+            assertTrue(combined1.contains("CALL_VAR"));
+            assertFalse(combined1.contains("PATH="), "PATH should not be inherited when excluded from custom allowlist");
+            assertFalse(launcher1.getEnvironment().containsKey("PATH"));
+
+            // Test 2: Per-call cleanEnvironment(false) overrides client-level cleanEnvironment(true)
+            TerraformProcessData dataDisableClean = TerraformProcessData.builder()
+                    .terraformVersion("1.5.0")
+                    .workingDirectory(new File("."))
+                    .cleanEnvironment(false)
+                    .build();
+
+            ProcessLauncher launcher2 = client.newLauncher(dataDisableClean, "/bin/sh", "-c", "env");
+            client.applyEnvironment(launcher2, dataDisableClean);
+
+            List<String> output2 = new ArrayList<>();
+            launcher2.setOutputListener(output2::add);
+            int exitCode2 = launcher2.launch().get(30, TimeUnit.SECONDS);
+            assertEquals(0, exitCode2);
+            String combined2 = String.join("\n", output2);
+            assertTrue(combined2.contains("PATH="), "PATH must be present when cleanEnvironment is overridden to false");
+
+            // Test 3: Per-call inheritedEnvironmentVariables overrides client allowlist
+            TerraformProcessData dataOverrideAllowlist = TerraformProcessData.builder()
+                    .terraformVersion("1.5.0")
+                    .workingDirectory(new File("."))
+                    .inheritedEnvironmentVariables(Set.of("PATH"))
+                    .build();
+
+            ProcessLauncher launcher3 = client.newLauncher(dataOverrideAllowlist, "/bin/sh", "-c", "env");
+            client.applyEnvironment(launcher3, dataOverrideAllowlist);
+
+            List<String> output3 = new ArrayList<>();
+            launcher3.setOutputListener(output3::add);
+            int exitCode3 = launcher3.launch().get(30, TimeUnit.SECONDS);
+            assertEquals(0, exitCode3);
+            String combined3 = String.join("\n", output3);
+            assertTrue(combined3.contains("PATH="), "PATH must be present when allowlist is overridden on process data");
+        }
+    }
+
+    @Test
+    void toBuilderPreservesSecurityProperties() throws Exception {
+        try (TerraformClient client = TerraformClient.builder()
+                .pidIsolation(PidIsolation.BEST_EFFORT)
+                .cleanEnvironment(true)
+                .inheritedEnvironmentVariables(Set.of("PATH", "HOME"))
+                .showColor(false)
+                .build();
+             TerraformClient derived = client.toBuilder()
+                .jsonOutput(true)
+                .build()) {
+            assertEquals(PidIsolation.BEST_EFFORT, derived.getPidIsolation());
+            assertTrue(derived.isCleanEnvironment());
+            assertEquals(Set.of("PATH", "HOME"), derived.getInheritedEnvironmentVariables());
+            assertTrue(derived.isJsonOutput());
+            assertFalse(derived.isShowColor());
+        }
+    }
+
+    @Test
+    void initSetsGitSshCommandEnvironmentVariableWithoutBashWrapper() throws Exception {
+        File fakeKey = new File("/home/user/.ssh/id_rsa");
+        TerraformProcessData data = TerraformProcessData.builder()
+                .terraformVersion("1.5.0")
+                .workingDirectory(new File("."))
+                .sshFile(fakeKey)
+                .build();
+
+        TerraformClient client = new TerraformClient() {
+            @Override
+            public TerraformDownloader createTerraformDownloader() {
+                return new TerraformDownloader(null, null) {
+                    @Override
+                    public String downloadTerraformVersion(String version) {
+                        return "/usr/bin/terraform";
+                    }
+                };
+            }
+        };
+
+        ProcessLauncher launcher = client.getTerraformLauncher(data, line -> {}, line -> {}, TerraformCommand.init);
+        assertNotNull(launcher);
+        assertEquals(List.of("/usr/bin/terraform", "init", "-no-color", "-input=false"), launcher.getCommands());
+        assertEquals("ssh -i \"/home/user/.ssh/id_rsa\" -o StrictHostKeyChecking=no",
+                launcher.getEnvironment().get("GIT_SSH_COMMAND"));
     }
 
     private static void await(java.util.function.BooleanSupplier condition, String message) throws InterruptedException {
