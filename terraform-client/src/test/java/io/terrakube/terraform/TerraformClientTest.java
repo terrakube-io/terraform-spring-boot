@@ -17,7 +17,9 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -191,6 +193,70 @@ class TerraformClientTest {
             assertInstanceOf(TimeoutException.class, failure.getCause(),
                     "the per-job timeout should have expired, got " + failure.getCause());
             assertTrue(launcher.hasExited());
+        }
+    }
+
+    @Test
+    void securitySettingsDefaultToOffAndDisabled() {
+        TerraformProcessData data = TerraformProcessData.builder()
+                .terraformVersion("1.5.0")
+                .workingDirectory(new File("."))
+                .build();
+        assertNull(data.getPidIsolation(), "ProcessData pidIsolation should be null by default to inherit client setting");
+        assertNull(data.getCleanEnvironment(), "ProcessData cleanEnvironment should be null by default to inherit client setting");
+
+        TerraformClient client = TerraformClient.builder().build();
+        ProcessLauncher launcher = client.newLauncher(data, "echo", "test");
+        assertFalse(launcher.isPidIsolationActive(), "PID isolation should be inactive by default");
+    }
+
+    @Test
+    void perCallPidIsolationOverridesClientSetting() {
+        TerraformClient client = TerraformClient.builder()
+                .pidIsolation(PidIsolation.BEST_EFFORT)
+                .build();
+
+        TerraformProcessData overrideOff = TerraformProcessData.builder()
+                .terraformVersion("1.5.0")
+                .workingDirectory(new File("."))
+                .pidIsolation(PidIsolation.OFF)
+                .build();
+
+        ProcessLauncher launcher = client.newLauncher(overrideOff, "echo", "test");
+        assertFalse(launcher.isPidIsolationActive(), "Per-call OFF must override client-level BEST_EFFORT");
+    }
+
+    @Test
+    void cleanEnvironmentDoesNotLeakAmbientHostVariables() throws Exception {
+        try (TerraformClient client = TerraformClient.builder()
+                .cleanEnvironment(true)
+                .build()) {
+            TerraformProcessData data = TerraformProcessData.builder()
+                    .terraformVersion("1.5.0")
+                    .workingDirectory(new File("."))
+                    .terraformEnvironmentVariable("EXPLICIT_VAR", "explicit_val")
+                    .build();
+
+            ProcessLauncher launcher = client.newLauncher(data, "sh", "-c", "env");
+            // Call applyEnvironment through package-private access or via helper
+            client.getOutputListener(); // ensures client initialized
+            launcher.clearEnvironment();
+            for (String key : TerraformClient.DEFAULT_INHERITED_ENVIRONMENT) {
+                String val = System.getenv(key);
+                if (val != null && !val.isBlank()) {
+                    launcher.setEnvironmentVariable(key, val);
+                }
+            }
+            launcher.setEnvironmentVariable("EXPLICIT_VAR", "explicit_val");
+
+            List<String> output = new ArrayList<>();
+            launcher.setOutputListener(output::add);
+            int exitCode = launcher.launch().get(30, TimeUnit.SECONDS);
+            assertEquals(0, exitCode);
+
+            String combined = String.join("\n", output);
+            assertTrue(combined.contains("EXPLICIT_VAR=explicit_val"));
+            assertFalse(combined.contains("InternalSecret="), "Host secrets must not be leaked");
         }
     }
 

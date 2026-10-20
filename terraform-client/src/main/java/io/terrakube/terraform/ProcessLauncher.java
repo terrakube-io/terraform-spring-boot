@@ -54,6 +54,8 @@ public final class ProcessLauncher {
     private boolean inheritIO;
     private ExecutorService executor;
     private long timeoutSeconds;
+    private PidIsolation pidIsolation = PidIsolation.OFF;
+    private boolean isolated;
 
     ProcessLauncher(ExecutorService executor, String... commands) {
         this(executor, null, commands);
@@ -104,6 +106,20 @@ public final class ProcessLauncher {
         this.builder.redirectErrorStream(redirectErrorStream);
     }
 
+    void clearEnvironment() {
+        assert this.process == null;
+        this.builder.environment().clear();
+    }
+
+    void setPidIsolation(PidIsolation pidIsolation) {
+        assert this.process == null;
+        this.pidIsolation = (pidIsolation != null ? pidIsolation : PidIsolation.OFF);
+    }
+
+    boolean isPidIsolationActive() {
+        return this.isolated;
+    }
+
     void appendCommands(String... commands) {
         Stream<String> filteredCommands = Arrays.stream(commands).filter(c -> c != null && c.length() > 0);
         this.builder.command().addAll(filteredCommands.collect(Collectors.toList()));
@@ -118,7 +134,7 @@ public final class ProcessLauncher {
     void setOrAppendEnvironmentVariable(String name, String value, String delimiter) {
         assert name != null && name.length() > 0;
         if (value != null && value.length() > 0) {
-            String current = System.getenv(name);
+            String current = this.builder.environment().get(name);
             String target = (current == null || current.length() == 0 ? value : String.join(delimiter, current, value));
             this.setEnvironmentVariable(name, target);
         }
@@ -142,6 +158,17 @@ public final class ProcessLauncher {
         assert this.process == null;
         if (this.inheritIO) {
             this.builder.inheritIO();
+        }
+        if (this.pidIsolation != PidIsolation.OFF) {
+            if (PidIsolationSupport.isAvailable()) {
+                this.builder.command(PidIsolationSupport.wrap(this.builder.command()));
+                this.isolated = true;
+            } else if (this.pidIsolation == PidIsolation.REQUIRED) {
+                throw new PidIsolationUnavailableException(
+                        "PID namespace isolation is required but unavailable on this host");
+            } else {
+                PidIsolationSupport.warnUnavailableOnce();
+            }
         }
         try {
             this.process = this.builder.start();
@@ -257,7 +284,10 @@ public final class ProcessLauncher {
         // holds only a pid and a start time, so it has no streams to close. Neither
         // javadoc documents any of this. Do not "simplify" this back to
         // process.destroy().
-        handle.destroy();
+        ProcessHandle target = this.isolated
+                ? handle.children().findFirst().orElse(handle)
+                : handle;
+        target.destroy();
         try {
             if (!this.process.waitFor(gracePeriodSeconds, TimeUnit.SECONDS)) {
                 // The parent is usually still alive here, so it can still be asked

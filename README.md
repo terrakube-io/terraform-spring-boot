@@ -371,3 +371,54 @@ Your endpoint should expose with the following data:
    }
 }
 ```
+
+## Process Hardening (Security Features)
+
+Terraform executions can invoke user-controlled code via `local-exec` provisioners, `data "external"` scripts, and provider plugins. To prevent untrusted subprocesses from accessing host secrets, two hardening mechanisms are available:
+
+### 1. Clean Environment Sanitization
+
+Wipes ambient JVM environment variables (e.g. host credentials, internal tokens, database passwords) and only retains a safe allowlist (`PATH`, `HOME`, `USER`, `SHELL`, `TMPDIR`, `LANG`, `LC_ALL`, `TERM`) plus any explicitly provided variables:
+
+```java
+TerraformClient client = TerraformClient.builder()
+        .cleanEnvironment(true)
+        .build();
+```
+
+Callers can also configure `cleanEnvironment` per execution in `TerraformProcessData`:
+
+```java
+TerraformProcessData data = TerraformProcessData.builder()
+        .terraformVersion("1.5.7")
+        .workingDirectory(new File("/path/to/tf"))
+        .cleanEnvironment(true)
+        .build();
+```
+
+### 2. PID Namespace Isolation
+
+Isolates child processes into a private Linux PID namespace (`unshare --map-root-user --user --pid --fork --mount-proc --kill-child`), preventing subprocesses from inspecting the host JVM's environment via `/proc/$PPID/environ`.
+
+Three isolation modes are available:
+- `PidIsolation.OFF` (default): Runs unisolated.
+- `PidIsolation.BEST_EFFORT`: Isolates if `unshare` is supported; otherwise logs a warning and runs unisolated.
+- `PidIsolation.REQUIRED`: Isolates if supported; otherwise fails closed and throws `PidIsolationUnavailableException` before starting any process.
+
+```java
+TerraformClient client = TerraformClient.builder()
+        .pidIsolation(PidIsolation.REQUIRED)
+        .build();
+```
+
+### 3. Spring Boot Configuration Properties
+
+In Spring Boot applications, configure these flags in `application.properties`:
+
+```properties
+io.terrakube.terraform.flags.pid-isolation=best-effort
+io.terrakube.terraform.flags.clean-environment=true
+io.terrakube.terraform.flags.inherited-environment-variables=PATH,HOME,USER,SHELL,TMPDIR
+```
+
+> **Binary Compatibility Note:** Adding new properties to `TerraformProcessData` updates the Lombok-generated all-args constructor signature. Applications constructing `TerraformProcessData` via `builder()` or getters/setters are unaffected.

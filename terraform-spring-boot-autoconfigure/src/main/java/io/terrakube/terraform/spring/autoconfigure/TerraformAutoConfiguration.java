@@ -20,6 +20,9 @@ public class TerraformAutoConfiguration {
                     .jsonOutput(tfProperties.isJsonOutput())
                     .terraformReleasesUrl(tfProperties.getTerraformReleasesUrl())
                     .tofuReleasesUrl(tfProperties.getTofuReleasesUrl())
+                    .pidIsolation(tfProperties.getPidIsolation())
+                    .cleanEnvironment(tfProperties.isCleanEnvironment())
+                    .inheritedEnvironmentVariables(tfProperties.getInheritedEnvironmentVariables())
                     .build();
     }
 }

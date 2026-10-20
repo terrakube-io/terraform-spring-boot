@@ -41,6 +41,10 @@ public class TerraformClient implements AutoCloseable {
     // spend". They happen to agree today.
     private static final long CLOSE_GRACE_PERIOD_SECONDS = 10;
 
+    public static final Set<String> DEFAULT_INHERITED_ENVIRONMENT = Set.of(
+            "PATH", "HOME", "USER", "SHELL", "TMPDIR", "LANG", "LC_ALL", "TERM"
+    );
+
     private final ExecutorService executor = Executors.newWorkStealingPool();
     // Final with an initializer and no accessors on purpose: that is what keeps
     // these two off the generated builder, off the all-args constructor and out
@@ -69,6 +73,11 @@ public class TerraformClient implements AutoCloseable {
     private Map<String, String> terraformParameters;
     private Consumer<String> outputListener;
     private Consumer<String> errorListener;
+
+    @Builder.Default
+    private PidIsolation pidIsolation = PidIsolation.OFF;
+    private boolean cleanEnvironment;
+    private Set<String> inheritedEnvironmentVariables;
 
     public CompletableFuture<String> version() throws IOException {
         ProcessLauncher launcher = this.getTerraformLauncher(TerraformCommand.version);
@@ -302,6 +311,8 @@ public class TerraformClient implements AutoCloseable {
                 .varFileName(this.varFileName)
                 .terraformVariables(this.terraformParameters)
                 .terraformEnvironmentVariables(this.environmentVariables)
+                .pidIsolation(this.pidIsolation)
+                .cleanEnvironment(this.cleanEnvironment)
                 .build();
 
         return getTerraformLauncher(terraformProcessData, this.outputListener, this.errorListener, command);
@@ -320,10 +331,7 @@ public class TerraformClient implements AutoCloseable {
         launcher.setDirectory(terraformProcessData.getWorkingDirectory());
         launcher.setInheritIO(this.isInheritIO());
 
-        if (terraformProcessData.getTerraformEnvironmentVariables() != null)
-            for (Map.Entry<String, String> entry : terraformProcessData.getTerraformEnvironmentVariables().entrySet()) {
-                launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
-            }
+        applyEnvironment(launcher, terraformProcessData);
 
         ComparableVersion version = new ComparableVersion(terraformProcessData.getTerraformVersion());
 
@@ -449,7 +457,36 @@ public class TerraformClient implements AutoCloseable {
     ProcessLauncher newLauncher(TerraformProcessData terraformProcessData, String... commands) {
         ProcessLauncher launcher = new ProcessLauncher(this.executor, this::registerLiveLauncher, commands);
         launcher.setTimeoutSeconds(terraformProcessData.getTimeoutSeconds());
+        PidIsolation effectiveIsolation = terraformProcessData.getPidIsolation() != null
+                ? terraformProcessData.getPidIsolation()
+                : (this.pidIsolation != null ? this.pidIsolation : PidIsolation.OFF);
+        launcher.setPidIsolation(effectiveIsolation);
         return launcher;
+    }
+
+    private void applyEnvironment(ProcessLauncher launcher, TerraformProcessData terraformProcessData) {
+        boolean effectiveClean = terraformProcessData.getCleanEnvironment() != null
+                ? terraformProcessData.getCleanEnvironment()
+                : this.cleanEnvironment;
+
+        if (effectiveClean) {
+            launcher.clearEnvironment();
+            Set<String> allowlist = this.inheritedEnvironmentVariables != null
+                    ? this.inheritedEnvironmentVariables
+                    : DEFAULT_INHERITED_ENVIRONMENT;
+            for (String key : allowlist) {
+                String val = System.getenv(key);
+                if (val != null && !val.isBlank()) {
+                    launcher.setEnvironmentVariable(key, val);
+                }
+            }
+        }
+
+        if (terraformProcessData.getTerraformEnvironmentVariables() != null) {
+            for (Map.Entry<String, String> entry : terraformProcessData.getTerraformEnvironmentVariables().entrySet()) {
+                launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
+            }
+        }
     }
 
     private void registerLiveLauncher(ProcessLauncher launcher) {
@@ -473,10 +510,7 @@ public class TerraformClient implements AutoCloseable {
         processLauncher.setInheritIO(this.isInheritIO());
         processLauncher.setDirectory(terraformProcessData.getWorkingDirectory());
 
-        if (terraformProcessData.getTerraformEnvironmentVariables() != null)
-            for (Map.Entry<String, String> entry : terraformProcessData.getTerraformEnvironmentVariables().entrySet()) {
-                processLauncher.setEnvironmentVariable(entry.getKey(), entry.getValue());
-            }
+        applyEnvironment(processLauncher, terraformProcessData);
 
         if (!this.showColor)
             initSSHCommand = initSSHCommand.concat(" " + TERRAFORM_PARAM_NO_COLOR);

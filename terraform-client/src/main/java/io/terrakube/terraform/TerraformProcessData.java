@@ -38,6 +38,16 @@ public class TerraformProcessData {
      */
     @Builder.Default
     long timeoutSeconds = 0;
+    /**
+     * Per-call override for Linux PID namespace isolation; {@code null}
+     * inherits {@link TerraformClient}'s setting.
+     */
+    PidIsolation pidIsolation;
+    /**
+     * Per-call override for clean environment sanitization; {@code null}
+     * inherits {@link TerraformClient}'s setting.
+     */
+    Boolean cleanEnvironment;
     @Singular Map<String, String> terraformVariables;
     @Singular Map<String, String> terraformEnvironmentVariables;
 }
