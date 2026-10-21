@@ -316,6 +316,31 @@ class TerraformClientTest {
     }
 
     @Test
+    void cleanEnvironmentEmptyAllowlistFallsBackToDefault() throws Exception {
+        try (TerraformClient client = TerraformClient.builder()
+                .cleanEnvironment(true)
+                .inheritedEnvironmentVariables(Collections.emptySet())
+                .build()) {
+            TerraformProcessData data = TerraformProcessData.builder()
+                    .terraformVersion("1.5.0")
+                    .workingDirectory(new File("."))
+                    .inheritedEnvironmentVariables(Collections.emptySet())
+                    .build();
+
+            ProcessLauncher launcher = client.newLauncher(data, "/bin/sh", "-c", "env");
+            client.applyEnvironment(launcher, data);
+
+            List<String> output = new ArrayList<>();
+            launcher.setOutputListener(output::add);
+            int exitCode = launcher.launch().get(30, TimeUnit.SECONDS);
+            assertEquals(0, exitCode);
+
+            String combined = String.join("\n", output);
+            assertTrue(combined.contains("PATH="), "Empty allowlist must fall back to default and retain PATH");
+        }
+    }
+
+    @Test
     void toBuilderPreservesSecurityProperties() throws Exception {
         try (TerraformClient client = TerraformClient.builder()
                 .pidIsolation(PidIsolation.BEST_EFFORT)

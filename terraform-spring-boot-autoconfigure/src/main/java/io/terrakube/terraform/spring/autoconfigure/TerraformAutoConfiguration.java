@@ -14,6 +14,10 @@ public class TerraformAutoConfiguration {
 
     @Bean
     public TerraformClient terraformClient(@NonNull TerraformProperties tfProperties) {
+            java.util.Set<String> inheritedEnv = tfProperties.getInheritedEnvironmentVariables();
+            if (inheritedEnv != null && (inheritedEnv.isEmpty() || inheritedEnv.stream().allMatch(String::isBlank))) {
+                inheritedEnv = null;
+            }
 
             return TerraformClient.builder()
                     .showColor(tfProperties.isEnableColor())
@@ -22,7 +26,7 @@ public class TerraformAutoConfiguration {
                     .tofuReleasesUrl(tfProperties.getTofuReleasesUrl())
                     .pidIsolation(tfProperties.getPidIsolation())
                     .cleanEnvironment(tfProperties.isCleanEnvironment())
-                    .inheritedEnvironmentVariables(tfProperties.getInheritedEnvironmentVariables())
+                    .inheritedEnvironmentVariables(inheritedEnv)
                     .build();
     }
 }

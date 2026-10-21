@@ -476,14 +476,24 @@ public class TerraformClient implements AutoCloseable {
 
         if (effectiveClean) {
             launcher.clearEnvironment();
-            Set<String> sourceAllowlist = terraformProcessData.getInheritedEnvironmentVariables() != null
-                    ? terraformProcessData.getInheritedEnvironmentVariables()
-                    : (this.inheritedEnvironmentVariables != null ? this.inheritedEnvironmentVariables : DEFAULT_INHERITED_ENVIRONMENT);
+            Set<String> sourceAllowlist;
+            if (terraformProcessData.getInheritedEnvironmentVariables() != null && !terraformProcessData.getInheritedEnvironmentVariables().isEmpty()) {
+                sourceAllowlist = terraformProcessData.getInheritedEnvironmentVariables();
+            } else if (this.inheritedEnvironmentVariables != null && !this.inheritedEnvironmentVariables.isEmpty()) {
+                sourceAllowlist = this.inheritedEnvironmentVariables;
+            } else {
+                sourceAllowlist = DEFAULT_INHERITED_ENVIRONMENT;
+            }
             Set<String> allowlist = Set.copyOf(sourceAllowlist);
             for (String key : allowlist) {
-                String val = System.getenv(key);
-                if (val != null && !val.isBlank()) {
-                    launcher.setEnvironmentVariable(key, val);
+                if (key != null && !key.isBlank()) {
+                    String val = System.getenv(key);
+                    if ((val == null || val.isBlank()) && "HOME".equals(key)) {
+                        val = System.getProperty("user.home");
+                    }
+                    if (val != null && !val.isBlank()) {
+                        launcher.setEnvironmentVariable(key, val);
+                    }
                 }
             }
         }
