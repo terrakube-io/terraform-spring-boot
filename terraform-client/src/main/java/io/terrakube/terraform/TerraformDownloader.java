@@ -44,6 +44,10 @@ public class TerraformDownloader {
     public static final String TERRAFORM_RELEASES_URL = "https://releases.hashicorp.com/terraform/index.json";
     public static final String TOFU_RELEASES_URL = "https://api.github.com/repos/opentofu/opentofu/releases";
 
+    // GitHub's release-download 302 redirect includes a Content-Security-Policy header that exceeds
+    // Reactor Netty's 8 KiB default (observed ~9.2 KiB CSP / ~10.8 KiB total headers).
+    static final int MAX_RESPONSE_HEADER_SIZE = 32 * 1024;
+
     private TerraformResponse terraformReleases;
     private List<TofuRelease> tofuReleases;
     private File terraformDownloadDirectory;
@@ -165,13 +169,16 @@ public class TerraformDownloader {
         log.info("Found {} tofu releases", this.tofuReleases.size());
     }
 
+    private static HttpClient createHttpClient() {
+        return HttpClient.create()
+                .httpResponseDecoder(spec -> spec.maxHeaderSize(MAX_RESPONSE_HEADER_SIZE))
+                .followRedirect(true)
+                .proxyWithSystemProperties();
+    }
+
     private static void downloadReleasesToFile(String releasesUrl, File releasesFile) {
         WebClient webClient = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(
-                        HttpClient.create()
-                                .followRedirect(true)
-                                .proxyWithSystemProperties()
-                ))
+                .clientConnector(new ReactorClientHttpConnector(createHttpClient()))
                 .defaultHeaders(h -> {
                     h.add("User-Agent", "releases-downloader");
                     h.setAccept(List.of(MediaType.APPLICATION_JSON));
@@ -212,11 +219,7 @@ public class TerraformDownloader {
                                 )));
 
                 WebClient webClient = WebClient.builder()
-                        .clientConnector(new ReactorClientHttpConnector(
-                                HttpClient.create()
-                                        .followRedirect(true)
-                                        .proxyWithSystemProperties()
-                        ))
+                        .clientConnector(new ReactorClientHttpConnector(createHttpClient()))
                         .defaultHeaders(h -> {
                             h.add("User-Agent", "terraform-downloader");
                             h.setAccept(List.of(MediaType.APPLICATION_OCTET_STREAM, MediaType.ALL));

@@ -20,6 +20,11 @@ jobs:
           server-id: central
           server-username: MAVEN_USERNAME
           server-password: MAVEN_PASSWORD
+      - name: Pin Maven to 3.9.16
+        run: |
+          curl -sS -L https://archive.apache.org/dist/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz | tar -xz -C /tmp
+          echo "/tmp/apache-maven-3.9.16/bin" >> $GITHUB_PATH
+          /tmp/apache-maven-3.9.16/bin/mvn --version
       - name: Import GPG key
         env:
           GPG_PRIVATE_KEY: ${{ secrets.OSSRH_GPG_SECRET_KEY }}
@@ -30,7 +35,7 @@ jobs:
       - name: Update POM Version
         run: mvn versions:set-property -Dproperty=revision -DnewVersion=$VERSION -DgenerateBackupPoms=false
       - name: Publish to the Maven Central Repository
-        run: mvn --batch-mode deploy
+        run: mvn --batch-mode clean deploy
         env:
           MAVEN_USERNAME:  ${{ secrets.MAVEN_USERNAME }}
           MAVEN_PASSWORD:  ${{ secrets.MAVEN_PASSWORD }}
