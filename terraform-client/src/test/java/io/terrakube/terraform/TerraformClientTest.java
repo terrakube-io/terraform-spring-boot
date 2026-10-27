@@ -15,6 +15,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -28,19 +29,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * through plan()/apply() would download a terraform release - and that factory
  * is the single funnel every command path goes through.
  * <p>
- * The multi-launcher test attaches no output listeners, and that is deliberate
- * rather than lazy. launch() only submits the two stream reader tasks when a
- * listener is set, and those readers block on the child's pipe for as long as it
- * lives, so each live launcher costs three tasks on the client's work-stealing
- * pool - whose parallelism is availableProcessors(). Three concurrent launchers
- * is nine tasks: that saturates a 4-core runner and the last launcher's reader
- * is never scheduled. It needs none of the child's output, so the readers are
- * simply never created, and its readiness is signalled through the filesystem
- * for the same reason.
+ * The multi-launcher test attaches no output listeners and signals child
+ * readiness through the filesystem. That was originally forced on it: the
+ * client's pool used to be sized to availableProcessors(), so three launchers -
+ * nine blocking tasks - saturated a 4-core runner and the third child's
+ * readiness line was never delivered. everyConcurrentCommandDeliversItsOutput
+ * below is the regression test for that, and the pool now grows to the blocking
+ * work, so the constraint is gone. The test keeps both choices anyway: it needs
+ * none of the child's output, and a filesystem handshake does not depend on
+ * reader scheduling at all, which is the right way round for a test whose
+ * subject is close() rather than output capture.
  * <p>
- * The single-launcher tests do keep their listeners. Three tasks fit, and
- * dropping them there would lose the only coverage of close() running against
- * readers genuinely blocked in readLine() on a live pipe.
+ * The single-launcher tests do keep their listeners, deliberately: dropping them
+ * would lose the only coverage of close() running against readers genuinely
+ * blocked in readLine() on a live pipe.
  */
 @DisabledOnOs(OS.WINDOWS)
 class TerraformClientTest {
@@ -172,6 +174,72 @@ class TerraformClientTest {
     }
 
     /**
+     * Regression test for the client's executor being sized for CPU work while
+     * every task it runs is blocking I/O.
+     * <p>
+     * Each running command holds three tasks of that pool blocked for as long as
+     * the child lives: two stream readers and the waitFor() supplier. A
+     * ForkJoinPool only grows workers for a ManagedBlocker, and neither
+     * readLine() nor waitFor() is one, so a pool with parallelism
+     * availableProcessors() can never run more than that many of them. N
+     * concurrent commands need 3N threads, so starvation begins once
+     * 3N - 1 &gt; P - measured on 4 cores, the second concurrent command already
+     * has a reader that is never scheduled.
+     * <p>
+     * The consequence is not slow output, it is a stopped child: an unscheduled
+     * reader stops draining the pipe, the pipe buffer fills, and the child
+     * blocks in write(2) and makes no further progress. Measured against the
+     * unfixed pool, a child froze after 8 loop iterations and had not advanced
+     * 20 seconds later, with zero lines delivered. For a terraform apply that is
+     * a run wedged mid-flight because something else is running on the same
+     * client.
+     * <p>
+     * The test sizes itself to the machine rather than pinning the core count
+     * with a JVM flag: it launches P/3 + 2 commands, which satisfies
+     * 3N - 1 &gt; P for every P &gt;= 1, so it starves on any host without the
+     * fix and passes on any host with it - while costing a third of what one
+     * command per core would on a large machine. Each child deliberately writes
+     * more than a pipe buffer to each stream - a quiet child goes dark without
+     * ever wedging - and then stays alive, so that the readers of the commands
+     * that did get scheduled stay blocked rather than releasing their workers.
+     */
+    @Test
+    void everyConcurrentCommandDeliversItsOutput() throws Exception {
+        // seq 1 20000 is 108,894 bytes, 1.66x the 64 KiB pipe buffer.
+        final int lines = 20_000;
+        // Starvation needs 3N - 1 > P, and P/3 + 2 satisfies it at every P
+        // (P=1 -> N=2, P=4 -> 3, P=14 -> 6, P=64 -> 23) without putting one
+        // process per core on a large machine.
+        final int processors = Runtime.getRuntime().availableProcessors();
+        final int commands = processors / 3 + 2;
+        TerraformClient client = TerraformClient.builder().build();
+        List<AtomicLong> stdout = new ArrayList<>();
+        List<AtomicLong> stderr = new ArrayList<>();
+        try {
+            for (int i = 0; i < commands; i++) {
+                AtomicLong out = new AtomicLong();
+                AtomicLong err = new AtomicLong();
+                stdout.add(out);
+                stderr.add(err);
+                ProcessLauncher launcher = client.newLauncher(processData(0), "bash", "-c",
+                        "seq 1 " + lines + "; seq 1 " + lines + " 1>&2; exec sleep 300");
+                launcher.setOutputListener(line -> out.incrementAndGet());
+                launcher.setErrorListener(line -> err.incrementAndGet());
+                launcher.launch();
+            }
+
+            await(() -> stdout.stream().allMatch(c -> c.get() == lines)
+                            && stderr.stream().allMatch(c -> c.get() == lines),
+                    () -> "every concurrent command must have its output read, but with "
+                            + commands + " commands on " + processors + " processors the delivered line counts were stdout="
+                            + stdout + " stderr=" + stderr + " of " + lines
+                            + " each; a command showing 0 had no reader scheduled, and its child is blocked in write()");
+        } finally {
+            client.close();
+        }
+    }
+
+    /**
      * The timeout is configured per job on TerraformProcessData, so it has to
      * reach the launcher the client builds for that job. Without the wiring the
      * launcher runs untimed and this future completes normally.
@@ -194,11 +262,21 @@ class TerraformClientTest {
         }
     }
 
-    private static void await(java.util.function.BooleanSupplier condition, String message) throws InterruptedException {
+    private static void await(java.util.function.BooleanSupplier condition,
+                              java.util.function.Supplier<String> message) throws InterruptedException {
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         while (!condition.getAsBoolean() && System.nanoTime() < deadline) {
             Thread.sleep(20);
         }
         assertTrue(condition.getAsBoolean(), message);
+    }
+
+    /**
+     * The message is a supplier because the counts it reports are mutating while
+     * the condition is being polled; building it eagerly would report the values
+     * from before the wait.
+     */
+    private static void await(java.util.function.BooleanSupplier condition, String message) throws InterruptedException {
+        await(condition, () -> message);
     }
 }
