@@ -131,6 +131,36 @@ class TerraformDownloaderTest {
 
     @Test
     @DisabledOnOs(OS.WINDOWS)
+    void installedBinaryWithVPrefixIsFoundWhenRequestedWithoutPrefix() throws IOException {
+        File binary = home.resolve(".terraform-spring-boot/tofu/v1.12.4/tofu").toFile();
+        Files.createDirectories(binary.getParentFile().toPath());
+        Files.writeString(binary.toPath(), "#!/bin/sh\n");
+        binary.setExecutable(true, true);
+
+        String path = new TerraformDownloader(terraformUrl(), tofuUrl()).downloadTofuVersion("1.12.4");
+
+        assertEquals(binary.getAbsolutePath(), path);
+        assertEquals(0, tofuRequests.get());
+        assertEquals(0, terraformRequests.get());
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void installedBinaryWithoutVPrefixIsFoundWhenRequestedWithPrefix() throws IOException {
+        File binary = home.resolve(".terraform-spring-boot/tofu/1.12.4/tofu").toFile();
+        Files.createDirectories(binary.getParentFile().toPath());
+        Files.writeString(binary.toPath(), "#!/bin/sh\n");
+        binary.setExecutable(true, true);
+
+        String path = new TerraformDownloader(terraformUrl(), tofuUrl()).downloadTofuVersion("v1.12.4");
+
+        assertEquals(binary.getAbsolutePath(), path);
+        assertEquals(0, tofuRequests.get());
+        assertEquals(0, terraformRequests.get());
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
     void downloadTofuVersionFollowsRedirectWithHeadersAbove8KiB() throws IOException {
         TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), tofuUrl());
         String os = downloader.getOs();
