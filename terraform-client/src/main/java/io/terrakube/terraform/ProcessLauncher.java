@@ -109,6 +109,10 @@ public final class ProcessLauncher {
         this.builder.command().addAll(filteredCommands.collect(Collectors.toList()));
     }
 
+    List<String> getCommands() {
+        return Collections.unmodifiableList(this.builder.command());
+    }
+
     void setEnvironmentVariable(String name, String value) {
         assert name != null && name.length() > 0;
         Map<String, String> env = this.builder.environment();

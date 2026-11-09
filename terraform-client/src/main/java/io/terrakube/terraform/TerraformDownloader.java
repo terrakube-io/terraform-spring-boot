@@ -341,10 +341,25 @@ public class TerraformDownloader {
         if (version == null || !EXACT_VERSION.matcher(version.trim()).matches()) {
             return Optional.empty();
         }
-        File binaryFile = new File(getTerraformBinaryPath(version.trim(), tofu));
+        String trimmed = version.trim();
+        File binaryFile = new File(getTerraformBinaryPath(trimmed, tofu));
         if (isUsableBinary(binaryFile)) {
             log.info("{} {} already installed at {}", tofu ? "tofu" : "terraform", version, binaryFile);
             return Optional.of(binaryFile.getAbsolutePath());
+        }
+        if (trimmed.startsWith("v") || trimmed.startsWith("V")) {
+            String stripped = trimmed.substring(1);
+            File strippedBinaryFile = new File(getTerraformBinaryPath(stripped, tofu));
+            if (isUsableBinary(strippedBinaryFile)) {
+                log.info("{} {} already installed at {}", tofu ? "tofu" : "terraform", stripped, strippedBinaryFile);
+                return Optional.of(strippedBinaryFile.getAbsolutePath());
+            }
+        } else {
+            File vPrefixedBinaryFile = new File(getTerraformBinaryPath("v" + trimmed, tofu));
+            if (isUsableBinary(vPrefixedBinaryFile)) {
+                log.info("{} {} already installed at {}", tofu ? "tofu" : "terraform", "v" + trimmed, vPrefixedBinaryFile);
+                return Optional.of(vPrefixedBinaryFile.getAbsolutePath());
+            }
         }
         return Optional.empty();
     }

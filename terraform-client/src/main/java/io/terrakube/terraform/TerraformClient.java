@@ -315,6 +315,14 @@ public class TerraformClient implements AutoCloseable {
             return getTerraformInitWithSSH(terraformPath, terraformProcessData, outputListener, errorListener);
         }
 
+        ProcessLauncher launcher = createCommandLauncher(terraformProcessData, terraformPath, command);
+        launcher.setOutputListener(outputListener);
+        launcher.setErrorListener(errorListener);
+        launcher.setRedirectErrorStream(this.redirectErrorStream);
+        return launcher;
+    }
+
+    ProcessLauncher createCommandLauncher(TerraformProcessData terraformProcessData, String terraformPath, TerraformCommand command) {
         ProcessLauncher launcher = newLauncher(terraformProcessData, terraformPath, command.getLabel());
 
         launcher.setDirectory(terraformProcessData.getWorkingDirectory());
@@ -325,13 +333,11 @@ public class TerraformClient implements AutoCloseable {
                 launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
             }
 
-        ComparableVersion version = new ComparableVersion(terraformProcessData.getTerraformVersion());
-
         if (!this.showColor)
             launcher.appendCommands(TERRAFORM_PARAM_NO_COLOR);
 
         //https://www.terraform.io/docs/internals/machine-readable-ui.html
-        if (this.jsonOutput && version.compareTo(new ComparableVersion("0.15.2")) > 0)
+        if (this.jsonOutput && supportsJsonOutput(terraformProcessData))
             switch (command) {
                 case plan:
                 case apply:
@@ -402,7 +408,7 @@ public class TerraformClient implements AutoCloseable {
                 break;
             case destroy:
                 //https://www.terraform.io/upgrade-guides/0-15.html#other-minor-command-line-behavior-changes
-                if (version.compareTo(new ComparableVersion("0.15.0")) < 0)
+                if (isPre015Terraform(terraformProcessData))
                     launcher.appendCommands(TERRAFORM_PARAM_FORCE);
                 else
                     launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
@@ -435,10 +441,58 @@ public class TerraformClient implements AutoCloseable {
                 break;
         }
 
-        launcher.setOutputListener(outputListener);
-        launcher.setErrorListener(errorListener);
-        launcher.setRedirectErrorStream(this.redirectErrorStream);
         return launcher;
+    }
+
+    static String normalizeVersion(String rawVersion) {
+        if (rawVersion == null) {
+            return null;
+        }
+        String trimmed = rawVersion.trim();
+        if (trimmed.startsWith("v") || trimmed.startsWith("V")) {
+            trimmed = trimmed.substring(1).trim();
+        }
+        return trimmed;
+    }
+
+    static boolean isPre015Terraform(TerraformProcessData data) {
+        if (data.isTofu()) {
+            return false;
+        }
+        String rawVersion = data.getTerraformVersion();
+        String normalized = normalizeVersion(rawVersion);
+        if (normalized == null || normalized.isEmpty()) {
+            return false;
+        }
+        if (!Character.isDigit(normalized.charAt(0))) {
+            return false;
+        }
+        try {
+            ComparableVersion version = new ComparableVersion(normalized);
+            return version.compareTo(new ComparableVersion("0.15.0")) < 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    static boolean supportsJsonOutput(TerraformProcessData data) {
+        if (data.isTofu()) {
+            return true;
+        }
+        String rawVersion = data.getTerraformVersion();
+        String normalized = normalizeVersion(rawVersion);
+        if (normalized == null || normalized.isEmpty()) {
+            return true;
+        }
+        if (!Character.isDigit(normalized.charAt(0))) {
+            return true;
+        }
+        try {
+            ComparableVersion version = new ComparableVersion(normalized);
+            return version.compareTo(new ComparableVersion("0.15.2")) > 0;
+        } catch (Exception e) {
+            return true;
+        }
     }
 
     /**

@@ -17,6 +17,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -200,5 +201,133 @@ class TerraformClientTest {
             Thread.sleep(20);
         }
         assertTrue(condition.getAsBoolean(), message);
+    }
+
+    @Test
+    void destroyForOpenTofuAlwaysUsesAutoApproveAndNeverForce() {
+        TerraformClient client = TerraformClient.builder().build();
+        List<String> versions = List.of("1.12.6", "v1.12.6", "1.6.0", "v1.6.0", ">= 1.12", "");
+
+        for (String version : versions) {
+            TerraformProcessData processData = TerraformProcessData.builder()
+                    .tofu(true)
+                    .terraformVersion(version)
+                    .workingDirectory(new File("."))
+                    .build();
+
+            ProcessLauncher launcher = client.createCommandLauncher(processData, "/dummy/tofu", TerraformCommand.destroy);
+            List<String> commands = launcher.getCommands();
+
+            assertTrue(commands.contains("-auto-approve"),
+                    "OpenTofu destroy with version \"" + version + "\" should contain -auto-approve");
+            assertFalse(commands.contains("-force"),
+                    "OpenTofu destroy with version \"" + version + "\" must NEVER contain -force");
+        }
+    }
+
+    @Test
+    void destroyForTerraformUsesAutoApproveForModernVersions() {
+        TerraformClient client = TerraformClient.builder().build();
+        List<String> modernVersions = List.of("1.5.7", "v1.5.7", "0.15.0", "v0.15.0", "1.12.6", "v1.12.6", ">= 1.5", "latest", "");
+
+        for (String version : modernVersions) {
+            TerraformProcessData processData = TerraformProcessData.builder()
+                    .tofu(false)
+                    .terraformVersion(version)
+                    .workingDirectory(new File("."))
+                    .build();
+
+            ProcessLauncher launcher = client.createCommandLauncher(processData, "/dummy/terraform", TerraformCommand.destroy);
+            List<String> commands = launcher.getCommands();
+
+            assertTrue(commands.contains("-auto-approve"),
+                    "Terraform destroy with version \"" + version + "\" should contain -auto-approve");
+            assertFalse(commands.contains("-force"),
+                    "Terraform destroy with version \"" + version + "\" should not contain -force");
+        }
+    }
+
+    @Test
+    void destroyForLegacyTerraformUsesForce() {
+        TerraformClient client = TerraformClient.builder().build();
+        List<String> legacyVersions = List.of("0.14.11", "v0.14.11", "0.14.0", "v0.14.0", "0.12.31", "v0.12.31");
+
+        for (String version : legacyVersions) {
+            TerraformProcessData processData = TerraformProcessData.builder()
+                    .tofu(false)
+                    .terraformVersion(version)
+                    .workingDirectory(new File("."))
+                    .build();
+
+            ProcessLauncher launcher = client.createCommandLauncher(processData, "/dummy/terraform", TerraformCommand.destroy);
+            List<String> commands = launcher.getCommands();
+
+            assertTrue(commands.contains("-force"),
+                    "Legacy Terraform destroy with version \"" + version + "\" should contain -force");
+            assertFalse(commands.contains("-auto-approve"),
+                    "Legacy Terraform destroy with version \"" + version + "\" should not contain -auto-approve");
+        }
+    }
+
+    @Test
+    void jsonOutputFlagAppendedForOpenTofuEvenWithVPrefix() {
+        TerraformClient client = TerraformClient.builder().jsonOutput(true).build();
+        List<String> versions = List.of("1.12.6", "v1.12.6", "v1.8.0");
+        List<TerraformCommand> commandsTestingJson = List.of(
+                TerraformCommand.plan,
+                TerraformCommand.apply,
+                TerraformCommand.planDestroy,
+                TerraformCommand.destroy
+        );
+
+        for (String version : versions) {
+            TerraformProcessData processData = TerraformProcessData.builder()
+                    .tofu(true)
+                    .terraformVersion(version)
+                    .workingDirectory(new File("."))
+                    .build();
+
+            for (TerraformCommand command : commandsTestingJson) {
+                ProcessLauncher launcher = client.createCommandLauncher(processData, "/dummy/tofu", command);
+                assertTrue(launcher.getCommands().contains("-json"),
+                        "OpenTofu " + command + " with version \"" + version + "\" should contain -json");
+            }
+        }
+    }
+
+    @Test
+    void jsonOutputFlagAppendedForTerraformWithVPrefix() {
+        TerraformClient client = TerraformClient.builder().jsonOutput(true).build();
+        List<String> versions = List.of("1.5.7", "v1.5.7", "v1.0.0");
+
+        for (String version : versions) {
+            TerraformProcessData processData = TerraformProcessData.builder()
+                    .tofu(false)
+                    .terraformVersion(version)
+                    .workingDirectory(new File("."))
+                    .build();
+
+            ProcessLauncher launcher = client.createCommandLauncher(processData, "/dummy/terraform", TerraformCommand.plan);
+            assertTrue(launcher.getCommands().contains("-json"),
+                    "Terraform plan with version \"" + version + "\" should contain -json");
+        }
+    }
+
+    @Test
+    void jsonOutputFlagOmittedForLegacyTerraform() {
+        TerraformClient client = TerraformClient.builder().jsonOutput(true).build();
+        List<String> legacyVersions = List.of("0.14.11", "v0.14.0", "0.15.2");
+
+        for (String version : legacyVersions) {
+            TerraformProcessData processData = TerraformProcessData.builder()
+                    .tofu(false)
+                    .terraformVersion(version)
+                    .workingDirectory(new File("."))
+                    .build();
+
+            ProcessLauncher launcher = client.createCommandLauncher(processData, "/dummy/terraform", TerraformCommand.plan);
+            assertFalse(launcher.getCommands().contains("-json"),
+                    "Legacy Terraform plan with version \"" + version + "\" should not contain -json");
+        }
     }
 }
