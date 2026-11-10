@@ -63,6 +63,25 @@ public class TerraformDownloader {
     
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    // Without these a download that never completes blocks the calling thread forever. For the releases
+    // list that also means holding RELEASES_LOCKS, so every other thread that needs the list hangs too.
+    // responseTimeout is the max idle time between reads, the block timeouts cap the whole download.
+    // Connecting is already capped by Netty's default 30s connect timeout.
+    private static final Duration RESPONSE_TIMEOUT = Duration.ofSeconds(60);
+    static Duration releasesDownloadTimeout = Duration.ofMinutes(2);
+    static Duration binaryDownloadTimeout = Duration.ofMinutes(10);
+
+    // One client per process. WebClient and the Reactor Netty HttpClient are thread safe, so there is
+    // no need to build new ones for every download. They live in a holder so they are only created on
+    // the first download, not when the class is loaded.
+    private static final class WebClients {
+        private static final HttpClient HTTP_CLIENT = createHttpClient();
+        static final WebClient RELEASES = createWebClient(HTTP_CLIENT, "releases-downloader",
+                List.of(MediaType.APPLICATION_JSON));
+        static final WebClient BINARY = createWebClient(HTTP_CLIENT, "terraform-downloader",
+                List.of(MediaType.APPLICATION_OCTET_STREAM, MediaType.ALL));
+    }
+
     // Makes sure we only cache the binaries for exactly specified versions, not for ranges
     private static final Pattern EXACT_VERSION = Pattern.compile("^v?\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.+-]+)?$");
 
@@ -202,7 +221,10 @@ public class TerraformDownloader {
                 T releases = fetchReleases(product, releasesUrl, parser);
                 RELEASES_CACHE.put(key, new CachedReleases<>(releases, Instant.now().plus(RELEASES_CACHE_TTL)));
                 return releases;
-            } catch (Exception e) {
+            } catch (Exception | OutOfMemoryError e) {
+                // OutOfMemoryError is caught on purpose: Netty throws io.netty.util.internal.OutOfDirectMemoryError
+                // when direct memory runs out. That says nothing about the heap, and failing here (or falling
+                // back to the previous list) is better than letting it escape and leaving the job in a broken state.
                 if (cached != null) {
                     log.warn("Error fetching {} releases from {}, using the previous list: {}", product, releasesUrl, e.getMessage());
                     RELEASES_CACHE.put(key, new CachedReleases<>(cached.releases(), Instant.now().plus(RELEASES_RETRY_AFTER_FAILURE)));
@@ -239,20 +261,23 @@ public class TerraformDownloader {
     private static HttpClient createHttpClient() {
         return HttpClient.create()
                 .httpResponseDecoder(spec -> spec.maxHeaderSize(MAX_RESPONSE_HEADER_SIZE))
+                .responseTimeout(RESPONSE_TIMEOUT)
                 .followRedirect(true)
                 .proxyWithSystemProperties();
     }
 
-    private static void downloadReleasesToFile(String releasesUrl, File releasesFile) {
-        WebClient webClient = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(createHttpClient()))
+    private static WebClient createWebClient(HttpClient httpClient, String userAgent, List<MediaType> accept) {
+        return WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .defaultHeaders(h -> {
-                    h.add("User-Agent", "releases-downloader");
-                    h.setAccept(List.of(MediaType.APPLICATION_JSON));
+                    h.add("User-Agent", userAgent);
+                    h.setAccept(accept);
                 })
                 .build();
+    }
 
-        webClient.get()
+    private static void downloadReleasesToFile(String releasesUrl, File releasesFile) {
+        WebClients.RELEASES.get()
                 .uri(releasesUrl)
                 .retrieve()
                 .onStatus(
@@ -262,7 +287,7 @@ public class TerraformDownloader {
                 .bodyToFlux(DataBuffer.class)
                 .as(dataBufferFlux -> DataBufferUtils.write(dataBufferFlux, releasesFile.toPath() ))
                 .then()
-                .block();
+                .block(releasesDownloadTimeout);
     }
 
     private String downloadFileOrReturnPathIfAlreadyExists(String fileName, String zipReleaseUrl, String version,
@@ -289,16 +314,8 @@ public class TerraformDownloader {
         }
 
         log.info("Downloading {} from: {}", product, zipReleaseUrl);
-        WebClient webClient = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(createHttpClient()))
-                .defaultHeaders(h -> {
-                    h.add("User-Agent", "terraform-downloader");
-                    h.setAccept(List.of(MediaType.APPLICATION_OCTET_STREAM, MediaType.ALL));
-                })
-                .build();
-
         try {
-            webClient.get()
+            WebClients.BINARY.get()
                     .uri(zipReleaseUrl)
                     .retrieve()
                     .onStatus(
@@ -308,8 +325,8 @@ public class TerraformDownloader {
                     .bodyToFlux(DataBuffer.class)
                     .as(dataBufferFlux -> DataBufferUtils.write(dataBufferFlux, zipFile.toPath()))
                     .then()
-                    .block();
-        } catch (RuntimeException exception) {
+                    .block(binaryDownloadTimeout);
+        } catch (RuntimeException | OutOfMemoryError exception) {
             // A partial archive would otherwise be picked up as an existing archive next time.
             FileUtils.deleteQuietly(zipFile);
             throw new IOException("Unable to download ".concat(zipReleaseUrl), exception);
