@@ -17,12 +17,18 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -47,6 +53,9 @@ class TerraformDownloaderTest {
     private final AtomicInteger terraformRequests = new AtomicInteger();
     private final AtomicInteger tofuRequests = new AtomicInteger();
     private volatile int tofuStatus = 200;
+    private volatile boolean tofuHangs = false;
+    private final CountDownLatch releaseHangingRequests = new CountDownLatch(1);
+    private ExecutorService serverExecutor;
 
     @BeforeEach
     void setUp() throws IOException {
@@ -61,14 +70,28 @@ class TerraformDownloaderTest {
         });
         server.createContext("/tofu.json", exchange -> {
             tofuRequests.incrementAndGet();
+            if (tofuHangs) {
+                // Never answer, like a fetch whose response never completes.
+                try {
+                    releaseHangingRequests.await(30, TimeUnit.SECONDS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                exchange.close();
+                return;
+            }
             respond(exchange, tofuStatus, tofuStatus == 200 ? TOFU_RELEASES : "{}");
         });
+        serverExecutor = Executors.newCachedThreadPool();
+        server.setExecutor(serverExecutor);
         server.start();
     }
 
     @AfterEach
     void tearDown() {
+        releaseHangingRequests.countDown();
         server.stop(0);
+        serverExecutor.shutdownNow();
         TerraformDownloader.clearReleasesCache();
         System.setProperty("user.home", originalUserHome);
     }
@@ -112,6 +135,43 @@ class TerraformDownloaderTest {
         TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), tofuUrl());
 
         assertThrows(IllegalStateException.class, () -> downloader.resolveTofuVersion(">=1.0.0"));
+    }
+
+    @Test
+    void hangingFetchWithoutAPreviousListFailsInsteadOfBlockingForever() {
+        tofuHangs = true;
+        TerraformDownloader downloader = downloaderWithShortReleasesTimeout();
+
+        assertTimeoutPreemptively(Duration.ofSeconds(10), () ->
+                assertThrows(IllegalStateException.class, () -> downloader.resolveTofuVersion(">=1.0.0")));
+    }
+
+    @Test
+    void previousListIsUsedWhenARefreshHangs() {
+        TerraformDownloader downloader = downloaderWithShortReleasesTimeout();
+        downloader.resolveTofuVersion(">=1.0.0");
+
+        TerraformDownloader.expireReleasesCache();
+        tofuHangs = true;
+
+        assertTimeoutPreemptively(Duration.ofSeconds(10), () ->
+                assertEquals("1.12.4", downloader.resolveTofuVersion(">=1.0.0")));
+        assertEquals(2, tofuRequests.get());
+    }
+
+    @Test
+    void hangingResponseIsCutByTheResponseTimeout() {
+        tofuHangs = true;
+        // Only the response timeout is short, so this proves it is applied to the request.
+        TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), tofuUrl(),
+                Duration.ofMillis(500), Duration.ofMinutes(5), null);
+
+        assertTimeoutPreemptively(Duration.ofSeconds(10), () ->
+                assertThrows(IllegalStateException.class, () -> downloader.resolveTofuVersion(">=1.0.0")));
+    }
+
+    private TerraformDownloader downloaderWithShortReleasesTimeout() {
+        return new TerraformDownloader(terraformUrl(), tofuUrl(), null, Duration.ofMillis(500), null);
     }
 
     @Test

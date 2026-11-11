@@ -16,10 +16,12 @@ import org.semver4j.range.RangeListFactory;
 import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ClientHttpRequest;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
+import reactor.netty.http.client.HttpClientRequest;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -63,11 +65,33 @@ public class TerraformDownloader {
     
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
+    // Without timeouts a download that never completes blocks the calling thread forever. For the releases
+    // list that also means holding RELEASES_LOCKS, so every other thread that needs the list hangs too.
+    // The response timeout is the max idle time between reads, the download timeouts cap the whole download.
+    // Connecting is already capped by Netty's default 30s connect timeout.
+    public static final Duration DEFAULT_RESPONSE_TIMEOUT = Duration.ofSeconds(60);
+    public static final Duration DEFAULT_RELEASES_DOWNLOAD_TIMEOUT = Duration.ofMinutes(2);
+    public static final Duration DEFAULT_BINARY_DOWNLOAD_TIMEOUT = Duration.ofMinutes(10);
+
+    // One client per process. WebClient and the Reactor Netty HttpClient are thread safe, so there is
+    // no need to build new ones for every download. They live in a holder so they are only created on
+    // the first download, not when the class is loaded.
+    private static final class WebClients {
+        private static final HttpClient HTTP_CLIENT = createHttpClient();
+        static final WebClient RELEASES = createWebClient(HTTP_CLIENT, "releases-downloader",
+                List.of(MediaType.APPLICATION_JSON));
+        static final WebClient BINARY = createWebClient(HTTP_CLIENT, "terraform-downloader",
+                List.of(MediaType.APPLICATION_OCTET_STREAM, MediaType.ALL));
+    }
+
     // Makes sure we only cache the binaries for exactly specified versions, not for ranges
     private static final Pattern EXACT_VERSION = Pattern.compile("^v?\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.+-]+)?$");
 
     private final String terraformReleasesUrl;
     private final String tofuReleasesUrl;
+    private final Duration responseTimeout;
+    private final Duration releasesDownloadTimeout;
+    private final Duration binaryDownloadTimeout;
     private File terraformDownloadDirectory;
 
     private File tofuDownloadDirectory;
@@ -93,6 +117,11 @@ public class TerraformDownloader {
     }
 
     @FunctionalInterface
+    private interface ReleasesFetcher {
+        void download(String releasesUrl, File releasesFile);
+    }
+
+    @FunctionalInterface
     private interface ReleasesParser<T> {
         T parse(File releasesFile) throws IOException;
     }
@@ -102,12 +131,27 @@ public class TerraformDownloader {
     }
 
     public TerraformDownloader(String terraformReleasesUrl, String tofuReleasesUrl) {
+        this(terraformReleasesUrl, tofuReleasesUrl, null, null, null);
+    }
+
+    /**
+     * @param responseTimeout         max idle time between reads of a response, {@code null} for {@link #DEFAULT_RESPONSE_TIMEOUT}
+     * @param releasesDownloadTimeout max time to download a releases list, {@code null} for {@link #DEFAULT_RELEASES_DOWNLOAD_TIMEOUT}
+     * @param binaryDownloadTimeout   max time to download a binary archive, {@code null} for {@link #DEFAULT_BINARY_DOWNLOAD_TIMEOUT}
+     */
+    public TerraformDownloader(String terraformReleasesUrl, String tofuReleasesUrl, Duration responseTimeout,
+                               Duration releasesDownloadTimeout, Duration binaryDownloadTimeout) {
         log.info("Initialize TerraformDownloader using custom URL");
         log.debug("Terraform releases URL: {}", terraformReleasesUrl);
         log.debug("Tofu releases URL: {}", tofuReleasesUrl);
 
         this.terraformReleasesUrl = terraformReleasesUrl;
         this.tofuReleasesUrl = tofuReleasesUrl;
+        this.responseTimeout = responseTimeout != null ? responseTimeout : DEFAULT_RESPONSE_TIMEOUT;
+        this.releasesDownloadTimeout = releasesDownloadTimeout != null ? releasesDownloadTimeout : DEFAULT_RELEASES_DOWNLOAD_TIMEOUT;
+        this.binaryDownloadTimeout = binaryDownloadTimeout != null ? binaryDownloadTimeout : DEFAULT_BINARY_DOWNLOAD_TIMEOUT;
+        log.debug("Download timeouts: response {}, releases {}, binary {}", this.responseTimeout,
+                this.releasesDownloadTimeout, this.binaryDownloadTimeout);
 
         try {
             createDownloadTempDirectory();
@@ -160,7 +204,7 @@ public class TerraformDownloader {
     }
 
     private TerraformResponse getTerraformReleases() {
-        return getCachedReleases("terraform", terraformReleasesUrl, releasesFile -> {
+        return getCachedReleases("terraform", terraformReleasesUrl, this::downloadReleasesToFile, releasesFile -> {
             TerraformResponse response = OBJECT_MAPPER.readValue(releasesFile, TerraformResponse.class);
             if (response == null || response.getVersions() == null) {
                 throw new IOException("Terraform releases response has no versions");
@@ -171,7 +215,7 @@ public class TerraformDownloader {
     }
 
     private List<TofuRelease> getTofuReleases() {
-        return getCachedReleases("tofu", tofuReleasesUrl, releasesFile -> {
+        return getCachedReleases("tofu", tofuReleasesUrl, this::downloadReleasesToFile, releasesFile -> {
             List<TofuRelease> releases = OBJECT_MAPPER.readValue(releasesFile,
                     OBJECT_MAPPER.getTypeFactory().constructCollectionType(List.class, TofuRelease.class));
             if (releases == null) {
@@ -183,7 +227,8 @@ public class TerraformDownloader {
     }
 
     @SuppressWarnings("unchecked")
-    private static <T> T getCachedReleases(String product, String releasesUrl, ReleasesParser<T> parser) {
+    private static <T> T getCachedReleases(String product, String releasesUrl, ReleasesFetcher fetcher,
+                                           ReleasesParser<T> parser) {
         String key = product + "|" + releasesUrl;
         CachedReleases<T> cached = (CachedReleases<T>) RELEASES_CACHE.get(key);
         if (cached != null && cached.isFresh()) {
@@ -199,10 +244,13 @@ public class TerraformDownloader {
             }
 
             try {
-                T releases = fetchReleases(product, releasesUrl, parser);
+                T releases = fetchReleases(product, releasesUrl, fetcher, parser);
                 RELEASES_CACHE.put(key, new CachedReleases<>(releases, Instant.now().plus(RELEASES_CACHE_TTL)));
                 return releases;
-            } catch (Exception e) {
+            } catch (Exception | OutOfMemoryError e) {
+                // OutOfMemoryError is caught on purpose: Netty throws io.netty.util.internal.OutOfDirectMemoryError
+                // when direct memory runs out. That says nothing about the heap, and failing here (or falling
+                // back to the previous list) is better than letting it escape and leaving the job in a broken state.
                 if (cached != null) {
                     log.warn("Error fetching {} releases from {}, using the previous list: {}", product, releasesUrl, e.getMessage());
                     RELEASES_CACHE.put(key, new CachedReleases<>(cached.releases(), Instant.now().plus(RELEASES_RETRY_AFTER_FAILURE)));
@@ -213,13 +261,14 @@ public class TerraformDownloader {
         }
     }
 
-    private static <T> T fetchReleases(String product, String releasesUrl, ReleasesParser<T> parser) throws IOException {
+    private static <T> T fetchReleases(String product, String releasesUrl, ReleasesFetcher fetcher,
+                                       ReleasesParser<T> parser) throws IOException {
         log.info("Downloading {} releases list from {}", product, releasesUrl);
         Path tempDirectory = Files.createDirectories(
                 Paths.get(FileUtils.getTempDirectory().getAbsolutePath(), UUID.randomUUID().toString()));
         try {
             File releasesFile = tempDirectory.resolve(product + "-releases.json").toFile();
-            downloadReleasesToFile(releasesUrl, releasesFile);
+            fetcher.download(releasesUrl, releasesFile);
             return parser.parse(releasesFile);
         } finally {
             FileUtils.deleteQuietly(tempDirectory.toFile());
@@ -243,17 +292,26 @@ public class TerraformDownloader {
                 .proxyWithSystemProperties();
     }
 
-    private static void downloadReleasesToFile(String releasesUrl, File releasesFile) {
-        WebClient webClient = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(createHttpClient()))
+    private static WebClient createWebClient(HttpClient httpClient, String userAgent, List<MediaType> accept) {
+        return WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .defaultHeaders(h -> {
-                    h.add("User-Agent", "releases-downloader");
-                    h.setAccept(List.of(MediaType.APPLICATION_JSON));
+                    h.add("User-Agent", userAgent);
+                    h.setAccept(accept);
                 })
                 .build();
+    }
 
-        webClient.get()
+    // The response timeout is set per request, so the shared HttpClient can serve downloaders with different settings.
+    private void withResponseTimeout(ClientHttpRequest request) {
+        HttpClientRequest nativeRequest = request.getNativeRequest();
+        nativeRequest.responseTimeout(responseTimeout);
+    }
+
+    private void downloadReleasesToFile(String releasesUrl, File releasesFile) {
+        WebClients.RELEASES.get()
                 .uri(releasesUrl)
+                .httpRequest(this::withResponseTimeout)
                 .retrieve()
                 .onStatus(
                         status -> !status.is2xxSuccessful(),
@@ -262,7 +320,7 @@ public class TerraformDownloader {
                 .bodyToFlux(DataBuffer.class)
                 .as(dataBufferFlux -> DataBufferUtils.write(dataBufferFlux, releasesFile.toPath() ))
                 .then()
-                .block();
+                .block(releasesDownloadTimeout);
     }
 
     private String downloadFileOrReturnPathIfAlreadyExists(String fileName, String zipReleaseUrl, String version,
@@ -289,17 +347,10 @@ public class TerraformDownloader {
         }
 
         log.info("Downloading {} from: {}", product, zipReleaseUrl);
-        WebClient webClient = WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(createHttpClient()))
-                .defaultHeaders(h -> {
-                    h.add("User-Agent", "terraform-downloader");
-                    h.setAccept(List.of(MediaType.APPLICATION_OCTET_STREAM, MediaType.ALL));
-                })
-                .build();
-
         try {
-            webClient.get()
+            WebClients.BINARY.get()
                     .uri(zipReleaseUrl)
+                    .httpRequest(this::withResponseTimeout)
                     .retrieve()
                     .onStatus(
                             status -> !status.is2xxSuccessful(),
@@ -308,8 +359,8 @@ public class TerraformDownloader {
                     .bodyToFlux(DataBuffer.class)
                     .as(dataBufferFlux -> DataBufferUtils.write(dataBufferFlux, zipFile.toPath()))
                     .then()
-                    .block();
-        } catch (RuntimeException exception) {
+                    .block(binaryDownloadTimeout);
+        } catch (RuntimeException | OutOfMemoryError exception) {
             // A partial archive would otherwise be picked up as an existing archive next time.
             FileUtils.deleteQuietly(zipFile);
             throw new IOException("Unable to download ".concat(zipReleaseUrl), exception);

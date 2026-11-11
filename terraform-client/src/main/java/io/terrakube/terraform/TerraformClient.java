@@ -5,6 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.maven.artifact.versioning.ComparableVersion;
 
 import java.io.*;
+import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
@@ -60,6 +61,10 @@ public class TerraformClient implements AutoCloseable {
     private String backendConfig;
     private String terraformReleasesUrl;
     private String tofuReleasesUrl;
+    // Download timeouts, null means the TerraformDownloader default.
+    private Duration downloadResponseTimeout;
+    private Duration releasesDownloadTimeout;
+    private Duration binaryDownloadTimeout;
 
     private String varFileName;
 
@@ -554,7 +559,8 @@ public class TerraformClient implements AutoCloseable {
             String TOFU_RELEASES_URL = (this.tofuReleasesUrl != null && !tofuReleasesUrl.isEmpty()) ? this.tofuReleasesUrl : TerraformDownloader.TOFU_RELEASES_URL;
 
             log.info("Creating terraform downloader using terraform release URL: {} and tofu release URL: {}", TERRAFORM_RELEASES_URL, TOFU_RELEASES_URL);
-            return new TerraformDownloader(TERRAFORM_RELEASES_URL, TOFU_RELEASES_URL);
+            return new TerraformDownloader(TERRAFORM_RELEASES_URL, TOFU_RELEASES_URL, downloadResponseTimeout,
+                    releasesDownloadTimeout, binaryDownloadTimeout);
         }
     }
 
