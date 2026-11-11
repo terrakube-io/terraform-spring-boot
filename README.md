@@ -110,6 +110,17 @@ io.terrakube.terraform.flags.jsonOutput=true
 
 > This feature is only supported in terraform >= 0.15.3
 
+The downloads of the terraform/tofu releases list and binaries have timeouts, so a download that never completes fails instead of hanging. The defaults can be overridden:
+
+```
+# Max idle time between reads of a response
+io.terrakube.terraform.flags.downloadResponseTimeout=60s
+# Max time to download the releases list
+io.terrakube.terraform.flags.releasesDownloadTimeout=2m
+# Max time to download a binary archive
+io.terrakube.terraform.flags.binaryDownloadTimeout=10m
+```
+
 The final step is to let the Spring framework wire up everything in your spring boot application:
 
 Example 1: `Not thread safe`

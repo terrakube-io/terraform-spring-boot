@@ -56,14 +56,12 @@ class TerraformDownloaderTest {
     private volatile boolean tofuHangs = false;
     private final CountDownLatch releaseHangingRequests = new CountDownLatch(1);
     private ExecutorService serverExecutor;
-    private Duration originalReleasesDownloadTimeout;
 
     @BeforeEach
     void setUp() throws IOException {
         originalUserHome = System.getProperty("user.home");
         System.setProperty("user.home", home.toString());
         TerraformDownloader.clearReleasesCache();
-        originalReleasesDownloadTimeout = TerraformDownloader.releasesDownloadTimeout;
 
         server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
         server.createContext("/terraform.json", exchange -> {
@@ -94,7 +92,6 @@ class TerraformDownloaderTest {
         releaseHangingRequests.countDown();
         server.stop(0);
         serverExecutor.shutdownNow();
-        TerraformDownloader.releasesDownloadTimeout = originalReleasesDownloadTimeout;
         TerraformDownloader.clearReleasesCache();
         System.setProperty("user.home", originalUserHome);
     }
@@ -142,9 +139,8 @@ class TerraformDownloaderTest {
 
     @Test
     void hangingFetchWithoutAPreviousListFailsInsteadOfBlockingForever() {
-        TerraformDownloader.releasesDownloadTimeout = Duration.ofMillis(500);
         tofuHangs = true;
-        TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), tofuUrl());
+        TerraformDownloader downloader = downloaderWithShortReleasesTimeout();
 
         assertTimeoutPreemptively(Duration.ofSeconds(10), () ->
                 assertThrows(IllegalStateException.class, () -> downloader.resolveTofuVersion(">=1.0.0")));
@@ -152,8 +148,7 @@ class TerraformDownloaderTest {
 
     @Test
     void previousListIsUsedWhenARefreshHangs() {
-        TerraformDownloader.releasesDownloadTimeout = Duration.ofMillis(500);
-        TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), tofuUrl());
+        TerraformDownloader downloader = downloaderWithShortReleasesTimeout();
         downloader.resolveTofuVersion(">=1.0.0");
 
         TerraformDownloader.expireReleasesCache();
@@ -162,6 +157,21 @@ class TerraformDownloaderTest {
         assertTimeoutPreemptively(Duration.ofSeconds(10), () ->
                 assertEquals("1.12.4", downloader.resolveTofuVersion(">=1.0.0")));
         assertEquals(2, tofuRequests.get());
+    }
+
+    @Test
+    void hangingResponseIsCutByTheResponseTimeout() {
+        tofuHangs = true;
+        // Only the response timeout is short, so this proves it is applied to the request.
+        TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), tofuUrl(),
+                Duration.ofMillis(500), Duration.ofMinutes(5), null);
+
+        assertTimeoutPreemptively(Duration.ofSeconds(10), () ->
+                assertThrows(IllegalStateException.class, () -> downloader.resolveTofuVersion(">=1.0.0")));
+    }
+
+    private TerraformDownloader downloaderWithShortReleasesTimeout() {
+        return new TerraformDownloader(terraformUrl(), tofuUrl(), null, Duration.ofMillis(500), null);
     }
 
     @Test
