@@ -5,30 +5,61 @@ on:
       - master
   pull_request:
     types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+  pull-requests: read
 jobs:
-  publish:
-    runs-on: ubuntu-latest
+  build:
+    name: build (${{ matrix.os }}, JDK ${{ matrix.java }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        java: ['17', '21']
+    env:
+      # Empty for PRs from forks, where secrets are not available.
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      # Sonar analysis runs on a single matrix cell only.
+      RUN_SONAR: ${{ matrix.os == 'ubuntu-latest' && matrix.java == '17' }}
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Java
-        uses: actions/setup-java@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          java-version: '17'
+          # Sonar needs the full history for accurate blame/new code detection
+          fetch-depth: 0
+      - name: Set up Java
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          java-version: ${{ matrix.java }}
           distribution: 'liberica'
+          cache: maven
+      - name: Build
+        run: mvn -B verify -Dgpg.skip
+      - name: Warn when Sonar is skipped
+        if: github.event_name == 'push' && env.RUN_SONAR == 'true' && env.SONAR_TOKEN == ''
+        run: echo "::warning::Sonar analysis skipped because SONAR_TOKEN is not available"
       - name: Cache SonarCloud packages
-        uses: actions/cache@v3
+        if: env.RUN_SONAR == 'true' && env.SONAR_TOKEN != ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
           restore-keys: ${{ runner.os }}-sonar
-      - name: Cache Maven packages
-        uses: actions/cache@v3
-        with:
-          path: ~/.m2
-          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-          restore-keys: ${{ runner.os }}-m2
-      - name: Build and analyze
+      - name: Sonar analysis
+        if: env.RUN_SONAR == 'true' && env.SONAR_TOKEN != ''
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        run: mvn -B verify org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=AzBuilder_terraform-spring-boot -Dgpg.skip
+        run: mvn -B org.sonarsource.scanner.maven:sonar-maven-plugin:sonar -Dsonar.projectKey=AzBuilder_terraform-spring-boot -Dgpg.skip
+  ci-status:
+    name: CI status
+    needs: build
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require all build jobs to succeed
+        env:
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          echo "build result: $BUILD_RESULT"
+          [ "$BUILD_RESULT" = "success" ]

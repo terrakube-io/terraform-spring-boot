@@ -1,7 +1,7 @@
 name: Publish package to the Maven Central Repository
 on:
   release:
-    types: [created]
+    types: [published]
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -9,11 +9,10 @@ jobs:
       VERSION: ${{ github.event.release.tag_name }}
     permissions:
       contents: read
-      packages: write
     steps:
-      - uses: actions/checkout@v3
-      - name: Set up Java for publishing to Maven Central Repositoryx
-        uses: actions/setup-java@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Java for publishing to Maven Central Repository
+        uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
         with:
           java-version: '17'
           distribution: 'liberica'
@@ -22,8 +21,15 @@ jobs:
           server-password: MAVEN_PASSWORD
       - name: Pin Maven to 3.9.16
         run: |
-          curl -sS -L https://archive.apache.org/dist/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz | tar -xz -C /tmp
-          echo "/tmp/apache-maven-3.9.16/bin" >> $GITHUB_PATH
+          set -euo pipefail
+          BASE_URL=https://archive.apache.org/dist/maven/maven-3/3.9.16/binaries
+          ARCHIVE=apache-maven-3.9.16-bin.tar.gz
+          curl -fsS -L -o "/tmp/$ARCHIVE" "$BASE_URL/$ARCHIVE"
+          curl -fsS -L -o "/tmp/$ARCHIVE.sha512" "$BASE_URL/$ARCHIVE.sha512"
+          # The .sha512 file may hold only the hash, so rebuild the "<hash>  <file>" line
+          echo "$(awk '{print $1}' "/tmp/$ARCHIVE.sha512")  /tmp/$ARCHIVE" | sha512sum -c -
+          tar -xz -C /tmp -f "/tmp/$ARCHIVE"
+          echo "/tmp/apache-maven-3.9.16/bin" >> "$GITHUB_PATH"
           /tmp/apache-maven-3.9.16/bin/mvn --version
       - name: Import GPG key
         env:
@@ -33,7 +39,7 @@ jobs:
           echo "$GPG_PRIVATE_KEY" | gpg --batch --import
           gpg --list-secret-keys --keyid-format LONG
       - name: Update POM Version
-        run: mvn versions:set-property -Dproperty=revision -DnewVersion=$VERSION -DgenerateBackupPoms=false
+        run: mvn versions:set-property -Dproperty=revision -DnewVersion="$VERSION" -DgenerateBackupPoms=false
       - name: Publish to the Maven Central Repository
         run: mvn --batch-mode clean deploy
         env:

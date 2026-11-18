@@ -8,3 +8,11 @@ updates:
     open-pull-requests-limit: 10
     commit-message:
       prefix: "deps"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
