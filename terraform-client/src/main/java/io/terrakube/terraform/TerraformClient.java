@@ -36,6 +36,7 @@ public class TerraformClient implements AutoCloseable {
     private static final String TERRAFORM_PLAN_REFRESH_FALSE="-refresh=false";
     private static final String TERRAFORM_PLAN_REFRESH_ONLY="-refresh-only";
     private static final String TF_STATE_PULL="pull";
+    private static final String GIT_SSH_COMMAND = "GIT_SSH_COMMAND";
     // Deliberately separate from ProcessLauncher.GRACE_PERIOD_SECONDS: that one
     // answers "how long may terraform take to shut down after a job timeout",
     // this one "how much of the pod's termination grace period may close()
@@ -128,6 +129,13 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.showPlan);
     }
 
+    /**
+     * Runs {@code terraform init -input=false}. With an {@code sshFile}, git
+     * fetches module sources with {@code GIT_SSH_COMMAND} set to
+     * {@code ssh -i <sshFile> -o StrictHostKeyChecking=no}. That value
+     * replaces any {@code GIT_SSH_COMMAND} among the terraform environment
+     * variables for init; other commands still get the caller's value.
+     */
     public CompletableFuture<Boolean> init(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
@@ -376,10 +384,6 @@ public class TerraformClient implements AutoCloseable {
         TerraformDownloader terraformDownloader = createTerraformDownloader();
         String terraformPath = terraformProcessData.isTofu() ? terraformDownloader.downloadTofuVersion(terraformProcessData.getTerraformVersion()) : terraformDownloader.downloadTerraformVersion(terraformProcessData.getTerraformVersion());
 
-        if (terraformProcessData.sshFile != null && command.equals(TerraformCommand.init)) {
-            return getTerraformInitWithSSH(terraformPath, terraformProcessData, outputListener, errorListener);
-        }
-
         ProcessLauncher launcher = createCommandLauncher(terraformProcessData, terraformPath, command);
         launcher.setOutputListener(outputListener);
         launcher.setErrorListener(errorListener);
@@ -397,6 +401,17 @@ public class TerraformClient implements AutoCloseable {
             for (Map.Entry<String, String> entry : terraformProcessData.getTerraformEnvironmentVariables().entrySet()) {
                 launcher.setEnvironmentVariable(entry.getKey(), entry.getValue());
             }
+
+        // Set after the caller's environment variables, so the sshFile wins
+        // over a GIT_SSH_COMMAND among them, as the old inline bash prefix did:
+        // callers pass user-controlled variables there, and such a value (even
+        // "") would otherwise drop the key and fail every SSH module fetch.
+        if (command == TerraformCommand.init && terraformProcessData.getSshFile() != null) {
+            String sshFilePath = terraformProcessData.getSshFile().getAbsolutePath();
+            log.info("Running init with an SSH key for module sources");
+            log.debug("SSH key file: {}", sshFilePath);
+            launcher.setEnvironmentVariable(GIT_SSH_COMMAND, gitSshCommand(sshFilePath));
+        }
 
         if (!this.showColor)
             launcher.appendCommands(TERRAFORM_PARAM_NO_COLOR);
@@ -588,31 +603,16 @@ public class TerraformClient implements AutoCloseable {
         }
     }
 
-    private ProcessLauncher getTerraformInitWithSSH(String terraformPath, TerraformProcessData terraformProcessData, Consumer<String> outputListener, Consumer<String> errorListener) {
-        String initSSHCommand = String.format("GIT_SSH_COMMAND='ssh -i %s -o StrictHostKeyChecking=no' %s init", terraformProcessData.getSshFile().getAbsolutePath(), terraformPath);
-        ProcessLauncher processLauncher = newLauncher(terraformProcessData, "bash", "-c");
-        processLauncher.setInheritIO(this.isInheritIO());
-        processLauncher.setDirectory(terraformProcessData.getWorkingDirectory());
+    // Git runs GIT_SSH_COMMAND through sh, so the key path must be quoted for
+    // the shell: unquoted, a space splits it and a ; or $(...) runs a command.
+    static String gitSshCommand(String sshFilePath) {
+        return "ssh -i " + shellQuote(sshFilePath) + " -o StrictHostKeyChecking=no";
+    }
 
-        if (terraformProcessData.getTerraformEnvironmentVariables() != null)
-            for (Map.Entry<String, String> entry : terraformProcessData.getTerraformEnvironmentVariables().entrySet()) {
-                processLauncher.setEnvironmentVariable(entry.getKey(), entry.getValue());
-            }
-
-        if (!this.showColor)
-            initSSHCommand = initSSHCommand.concat(" " + TERRAFORM_PARAM_NO_COLOR);
-
-        if (terraformProcessData.getTerraformBackendConfigFileName() != null) {
-            initSSHCommand = initSSHCommand.concat(" " + TERRAFORM_PARAM_BACKEND.concat(terraformProcessData.getTerraformBackendConfigFileName()));
-        }
-        initSSHCommand = initSSHCommand.concat(" " + TERRAFORM_PARAM_DISABLE_USER_INPUT);
-
-        log.warn("Running terraform init with command {},", initSSHCommand);
-        processLauncher.appendCommands(initSSHCommand);
-        processLauncher.setOutputListener(outputListener);
-        processLauncher.setErrorListener(errorListener);
-
-        return processLauncher;
+    // POSIX single quotes take everything literally except ' itself, which
+    // is written as '\'' - close the quote, an escaped quote, reopen.
+    static String shellQuote(String value) {
+        return "'" + value.replace("'", "'\\''") + "'";
     }
 
     public TerraformDownloader createTerraformDownloader() {
