@@ -128,7 +128,7 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.showPlan);
     }
 
-    public CompletableFuture<Boolean> init(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> init(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
         return this.run(
@@ -143,7 +143,10 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.init);
     }
 
-    public CompletableFuture<Boolean> plan(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
+    /**
+     * @throws IllegalArgumentException if refresh is false while refreshOnly is true
+     */
+    public CompletableFuture<Boolean> plan(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -151,15 +154,17 @@ public class TerraformClient implements AutoCloseable {
                 TerraformCommand.plan);
     }
 
-    public CompletableFuture<Integer> planDetailExitCode(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
-        terraformProcessData.setDetailExitCode(true);
+    /**
+     * @throws IllegalArgumentException if refresh is false while refreshOnly is true
+     */
+    public CompletableFuture<Integer> planDetailExitCode(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         return this.getTerraformLauncher(
-                terraformProcessData,
+                withDetailExitCode(terraformProcessData),
                 outputListener,
                 errorListener, TerraformCommand.plan).launch();
     }
 
-    public CompletableFuture<Boolean> statePull(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> statePull(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -167,7 +172,10 @@ public class TerraformClient implements AutoCloseable {
                 TerraformCommand.statePull);
     }
 
-    public CompletableFuture<Boolean> planDestroy(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
+    /**
+     * @throws IllegalArgumentException if refresh is false while refreshOnly is true
+     */
+    public CompletableFuture<Boolean> planDestroy(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -175,12 +183,21 @@ public class TerraformClient implements AutoCloseable {
                 TerraformCommand.planDestroy);
     }
 
-    public CompletableFuture<Integer> planDestroyDetailExitCode(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
-        terraformProcessData.setDetailExitCode(true);
+    /**
+     * @throws IllegalArgumentException if refresh is false while refreshOnly is true
+     */
+    public CompletableFuture<Integer> planDestroyDetailExitCode(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         return this.getTerraformLauncher(
-                terraformProcessData,
+                withDetailExitCode(terraformProcessData),
                 outputListener,
                 errorListener, TerraformCommand.planDestroy).launch();
+    }
+
+    // A copy, not setDetailExitCode(true) on the caller's object: callers
+    // reuse it, and a later plan() would then carry -detailed-exitcode and
+    // report "changes present" (exit code 2) as a failure.
+    private static TerraformProcessData withDetailExitCode(TerraformProcessData data) {
+        return data.toBuilder().detailExitCode(true).build();
     }
 
     public CompletableFuture<Boolean> plan() throws IOException {
@@ -188,7 +205,20 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.plan);
     }
 
-    public CompletableFuture<Boolean> apply(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
+    /**
+     * Runs {@code terraform apply -auto-approve -input=false}. What gets applied
+     * depends on the variables:
+     * <ul>
+     * <li>with no {@code varFileName} and no terraform variables, the saved plan
+     * file {@code terraformLibrary.tfPlan} that a previous {@code plan} wrote to
+     * the working directory;</li>
+     * <li>with a {@code varFileName} or any terraform variables, the saved plan is
+     * ignored and terraform plans afresh and applies the result without review.
+     * {@code varFileName} takes precedence: when it is set, the terraform variables
+     * are ignored, as they are by {@code plan} and {@code destroy}.</li>
+     * </ul>
+     */
+    public CompletableFuture<Boolean> apply(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         return this.run(
                 terraformProcessData,
                 outputListener,
@@ -196,12 +226,20 @@ public class TerraformClient implements AutoCloseable {
                 TerraformCommand.apply);
     }
 
+    /**
+     * Runs {@code terraform apply -auto-approve -input=false} with this client's
+     * settings. Like {@link #apply(TerraformProcessData, Consumer, Consumer)}, it
+     * applies the saved plan file {@code terraformLibrary.tfPlan} only when neither
+     * {@code varFileName} nor any terraform parameters are set; otherwise it plans
+     * afresh and applies the result without review, with {@code varFileName}
+     * taking precedence over the terraform parameters, which are then ignored.
+     */
     public CompletableFuture<Boolean> apply() throws IOException {
         this.checkRunningParameters();
         return this.run(TerraformCommand.apply);
     }
 
-    public CompletableFuture<Boolean> destroy(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> destroy(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         checkBackendConfigFile(terraformProcessData);
         return this.run(
                 terraformProcessData,
@@ -215,7 +253,7 @@ public class TerraformClient implements AutoCloseable {
         return this.run(TerraformCommand.destroy);
     }
 
-    public CompletableFuture<Boolean> output(TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
+    public CompletableFuture<Boolean> output(@NonNull TerraformProcessData terraformProcessData, @NonNull Consumer<String> outputListener, Consumer<String> errorListener) throws IOException {
         checkBackendConfigFile(terraformProcessData);
         checkVarFileParam(terraformProcessData);
         checkTerraformVariablesParam(terraformProcessData);
@@ -232,7 +270,9 @@ public class TerraformClient implements AutoCloseable {
     }
 
     private CompletableFuture<Boolean> run(TerraformProcessData terraformProcessData, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand... commands) throws IOException {
-        assert commands.length > 0;
+        if (commands.length == 0) {
+            throw new IllegalArgumentException("at least one terraform command is required");
+        }
         ProcessLauncher[] launchers = new ProcessLauncher[commands.length];
         for (int i = 0; i < commands.length; i++) {
             launchers[i] = this.getTerraformLauncher(
@@ -263,7 +303,9 @@ public class TerraformClient implements AutoCloseable {
 
 
     private CompletableFuture<Boolean> run(TerraformCommand... commands) throws IOException {
-        assert commands.length > 0;
+        if (commands.length == 0) {
+            throw new IllegalArgumentException("at least one terraform command is required");
+        }
         ProcessLauncher[] launchers = new ProcessLauncher[commands.length];
         for (int i = 0; i < commands.length; i++) {
             launchers[i] = this.getTerraformLauncher(commands[i]);
@@ -279,9 +321,23 @@ public class TerraformClient implements AutoCloseable {
     }
 
     private void checkTerraformVariablesParam(TerraformProcessData terraformProcessData) {
-        if (!terraformProcessData.getTerraformVariables().isEmpty()) {
+        if (!nullToEmpty(terraformProcessData.getTerraformVariables()).isEmpty()) {
             throw new IllegalArgumentException("terraform variables parameter should be empty for this terraform command");
         }
+    }
+
+    // Asked for together, terraform gets "-refresh=false -refresh-only" and
+    // fails late; reject it before anything is downloaded or started.
+    private static void checkRefreshFlags(TerraformProcessData terraformProcessData) {
+        if (!terraformProcessData.isRefresh() && terraformProcessData.isRefreshOnly()) {
+            throw new IllegalArgumentException("refresh=false and refreshOnly=true are contradictory, set only one of them");
+        }
+    }
+
+    // The maps can be null despite @Singular: the public no-arg constructor,
+    // the setters and the all-args constructors all bypass the builder.
+    private static Map<String, String> nullToEmpty(Map<String, String> map) {
+        return map == null ? Collections.emptyMap() : map;
     }
 
     private void checkBackendConfigFile(TerraformProcessData terraformProcessData) {
@@ -305,14 +361,18 @@ public class TerraformClient implements AutoCloseable {
                 .workingDirectory(this.workingDirectory)
                 .terraformBackendConfigFileName(this.backendConfig)
                 .varFileName(this.varFileName)
-                .terraformVariables(this.terraformParameters)
-                .terraformEnvironmentVariables(this.environmentVariables)
+                .terraformVariables(nullToEmpty(this.terraformParameters))
+                .terraformEnvironmentVariables(nullToEmpty(this.environmentVariables))
                 .build();
 
         return getTerraformLauncher(terraformProcessData, this.outputListener, this.errorListener, command);
     }
 
     private ProcessLauncher getTerraformLauncher(TerraformProcessData terraformProcessData, Consumer<String> outputListener, Consumer<String> errorListener, TerraformCommand command) throws IOException {
+        // Also checked in createCommandLauncher; here it fails before the download.
+        if (command == TerraformCommand.plan || command == TerraformCommand.planDestroy) {
+            checkRefreshFlags(terraformProcessData);
+        }
         TerraformDownloader terraformDownloader = createTerraformDownloader();
         String terraformPath = terraformProcessData.isTofu() ? terraformDownloader.downloadTofuVersion(terraformProcessData.getTerraformVersion()) : terraformDownloader.downloadTerraformVersion(terraformProcessData.getTerraformVersion());
 
@@ -363,6 +423,8 @@ public class TerraformClient implements AutoCloseable {
                 break;
             case planDestroy:
             case plan:
+                // Repeats getTerraformLauncher's check so this seam is safe on its own.
+                checkRefreshFlags(terraformProcessData);
                 if (!terraformProcessData.isRefresh()){
                     launcher.appendCommands(TERRAFORM_PLAN_REFRESH_FALSE);
                 }
@@ -372,7 +434,7 @@ public class TerraformClient implements AutoCloseable {
                 }
 
                 if (terraformProcessData.getVarFileName() == null)
-                    for (Map.Entry<String, String> entry : terraformProcessData.getTerraformVariables().entrySet()) {
+                    for (Map.Entry<String, String> entry : nullToEmpty(terraformProcessData.getTerraformVariables()).entrySet()) {
                         launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                     }
                 else {
@@ -392,12 +454,12 @@ public class TerraformClient implements AutoCloseable {
                 break;
             case apply:
                 if (terraformProcessData.getVarFileName() == null) {
-                    if (terraformProcessData.getTerraformVariables().entrySet().isEmpty()) {
+                    if (nullToEmpty(terraformProcessData.getTerraformVariables()).entrySet().isEmpty()) {
                         launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
                         launcher.appendCommands(TERRAFORM_PARAM_DISABLE_USER_INPUT);
                         launcher.appendCommands(TERRAFORM_PARAM_OUTPUT_PLAN_FILE);
                     } else {
-                        for (Map.Entry<String, String> entry : terraformProcessData.getTerraformVariables().entrySet()) {
+                        for (Map.Entry<String, String> entry : nullToEmpty(terraformProcessData.getTerraformVariables()).entrySet()) {
                             launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                         }
                         launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
@@ -419,7 +481,7 @@ public class TerraformClient implements AutoCloseable {
                     launcher.appendCommands(TERRAFORM_PARAM_AUTO_APPROVED);
 
                 if (terraformProcessData.getVarFileName() == null) {
-                    for (Map.Entry<String, String> entry : terraformProcessData.getTerraformVariables().entrySet()) {
+                    for (Map.Entry<String, String> entry : nullToEmpty(terraformProcessData.getTerraformVariables()).entrySet()) {
                         launcher.appendCommands(TERRAFORM_PARAM_VARIABLE, entry.getKey().concat("=").concat(entry.getValue()));
                     }
                 } else {
