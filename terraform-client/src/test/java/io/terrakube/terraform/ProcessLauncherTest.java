@@ -5,13 +5,18 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.OS;
+import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.Charset;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -23,8 +28,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -119,6 +126,194 @@ class ProcessLauncherTest {
         assertEquals(0, exitCode);
         assertEquals(expectedLines, lines.get(),
                 "error listener should have received the complete stderr output when the exit-code future completes");
+    }
+
+    /**
+     * Regression test: a stream without a listener used to get no reader at all,
+     * so once the child had written a pipe buffer's worth (~64 KB) to it, it
+     * blocked in write() forever and - with the timeout disabled by default -
+     * the future never completed. 300 KB is well past any pipe buffer.
+     */
+    @Test
+    void errorStreamWithoutListenerDoesNotBlockTheProcess() throws Exception {
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c",
+                "head -c 300000 /dev/zero | tr '\\0' x >&2; echo done");
+        List<String> output = Collections.synchronizedList(new ArrayList<>());
+        launcher.setOutputListener(output::add);
+        int exitCode = launcher.launch().get(FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertEquals(0, exitCode);
+        assertEquals(List.of("done"), output);
+    }
+
+    @Test
+    void outputStreamWithoutListenerDoesNotBlockTheProcess() throws Exception {
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c",
+                "head -c 300000 /dev/zero | tr '\\0' x; echo done >&2");
+        List<String> error = Collections.synchronizedList(new ArrayList<>());
+        launcher.setErrorListener(error::add);
+        int exitCode = launcher.launch().get(FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertEquals(0, exitCode);
+        assertEquals(List.of("done"), error);
+    }
+
+    /**
+     * With redirectErrorStream, stderr is written into the stdout pipe, so it is
+     * the missing output listener that leaves it unread, whatever the error
+     * listener is.
+     */
+    @Test
+    void mergedErrorStreamWithoutOutputListenerDoesNotBlockTheProcess() throws Exception {
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c",
+                "head -c 300000 /dev/zero | tr '\\0' x >&2");
+        launcher.setRedirectErrorStream(true);
+        launcher.setErrorListener(line -> {
+        });
+        int exitCode = launcher.launch().get(FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertEquals(0, exitCode);
+    }
+
+    /**
+     * A launch whose start() failed leaves the process unset, so the launcher
+     * can be reconfigured and launched again. A stream that had no listener the
+     * first time was redirected to DISCARD, and that must not stick once it has
+     * one, or its output is silently lost.
+     */
+    @Test
+    void relaunchAfterFailedStartDeliversOutputToANewListener(@TempDir Path tempDir) throws Exception {
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c", "echo hello");
+        launcher.setDirectory(tempDir.resolve("missing").toFile());
+        assertThrows(RuntimeException.class, launcher::launch, "start() should fail in a missing directory");
+
+        launcher.setDirectory(tempDir.toFile());
+        List<String> output = Collections.synchronizedList(new ArrayList<>());
+        launcher.setOutputListener(output::add);
+        int exitCode = launcher.launch().get(FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertEquals(0, exitCode);
+        assertEquals(List.of("hello"), output);
+    }
+
+    /**
+     * Regression test: with asserts off in production, an empty variable name
+     * used to be accepted, and TerraformClient passes user-defined workspace
+     * variables straight through, so it must be skipped rather than fail a job
+     * that worked before. A null name still fails, as it did inside
+     * ProcessBuilder.
+     */
+    @Test
+    void emptyEnvironmentVariableNameIsIgnored() throws Exception {
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c", "echo \"$KEPT\"");
+        launcher.setEnvironmentVariable("", "secret");
+        launcher.setOrAppendEnvironmentVariable("", "secret", ":");
+        launcher.setEnvironmentVariable("KEPT", "value");
+        List<String> output = Collections.synchronizedList(new ArrayList<>());
+        launcher.setOutputListener(output::add);
+        int exitCode = launcher.launch().get(FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertEquals(0, exitCode);
+        assertEquals(List.of("value"), output);
+        assertThrows(NullPointerException.class, () -> new ProcessLauncher(POOL, "true").setEnvironmentVariable(null, "x"));
+    }
+
+    /**
+     * A CompletionException thrown by the listener must reach the caller as the
+     * future's own failure, not wrapped in another one - otherwise get() would
+     * report the listener's CompletionException instead of what it carries.
+     */
+    @Test
+    void completionExceptionFromListenerIsNotWrappedAgain() throws Exception {
+        RuntimeException inner = new IllegalStateException("inner");
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c", "echo line");
+        launcher.setOutputListener(line -> {
+            throw new CompletionException(inner);
+        });
+        CompletableFuture<Integer> future = launcher.launch();
+
+        ExecutionException failure = assertThrows(ExecutionException.class,
+                () -> future.get(FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+        assertSame(inner, failure.getCause());
+    }
+
+    /**
+     * On the timeout path the caller gets the TimeoutException, so a listener
+     * failure has to travel on it or it is only in the log.
+     */
+    @Test
+    void listenerFailureIsSuppressedOnTheTimeoutException() throws Exception {
+        RuntimeException listenerException = new IllegalStateException("listener failed");
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c", "echo line; exec sleep 30");
+        launcher.setTimeoutSeconds(1);
+        launcher.setOutputListener(line -> {
+            throw listenerException;
+        });
+        CompletableFuture<Integer> future = launcher.launch();
+
+        ExecutionException failure = assertThrows(ExecutionException.class,
+                () -> future.get(FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+        assertInstanceOf(TimeoutException.class, failure.getCause());
+        assertEquals(List.of(listenerException), List.of(failure.getCause().getSuppressed()));
+    }
+
+    /**
+     * Regression test: an exception from a listener used to end the reader task,
+     * which closed the pipe, and the child died of SIGPIPE on its next write -
+     * for terraform, in the middle of an apply with its state lock held.
+     * <p>
+     * The listener throws on the first line, so everything after it is more than
+     * a pipe buffer the child still has to write. The marker holds seq's exit
+     * code, which is 141 if seq is killed by SIGPIPE, so "0" proves all lines
+     * were written and the process ran to the end. They must be drained, not
+     * delivered: a listener that failed - possibly with an OutOfMemoryError - is
+     * not called again.
+     */
+    @Test
+    void throwingListenerDoesNotKillTheProcess(@TempDir Path tempDir) throws Exception {
+        Path marker = tempDir.resolve("seq-exit-code");
+        RuntimeException listenerException = new IllegalStateException("listener failed");
+        AtomicLong calls = new AtomicLong();
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c",
+                "seq 1 50000; echo $? > \"$1\"", "bash", marker.toString());
+        launcher.setOutputListener(line -> {
+            calls.incrementAndGet();
+            throw listenerException;
+        });
+        launcher.setErrorListener(line -> {
+        });
+        CompletableFuture<Integer> future = launcher.launch();
+
+        ExecutionException failure = assertThrows(ExecutionException.class,
+                () -> future.get(FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS));
+        assertSame(listenerException, failure.getCause(),
+                "the future should fail with the listener's own exception, got " + failure.getCause());
+        assertTrue(Files.exists(marker), "the process should have run to the end despite the throwing listener");
+        assertEquals("0", Files.readString(marker).trim(), "seq should have written all its output without a SIGPIPE");
+        assertTrue(launcher.hasExited());
+        assertEquals(1, calls.get(), "the listener must not be called again after it threw");
+    }
+
+    /**
+     * Regression test: output used to be decoded with the platform charset, so
+     * under LANG=C on Java 17 terraform's box-drawing frame and any non-ASCII
+     * text arrived as '?'. The expectation is spelled as code points, so it does
+     * not depend on how this source file or the JVM's default charset decode a
+     * literal. It can only fail where the default charset is not UTF-8, e.g. a
+     * Java 17 run under LANG=C.
+     */
+    @Test
+    void outputIsDecodedAsUtf8() throws Exception {
+        // U+2577 (terraform's "╷") and U+00E9 ("é"), as raw UTF-8 bytes.
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c", "printf '\\xe2\\x95\\xb7 \\xc3\\xa9\\n'");
+        List<String> output = Collections.synchronizedList(new ArrayList<>());
+        launcher.setOutputListener(output::add);
+        int exitCode = launcher.launch().get(FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertEquals(0, exitCode);
+        assertEquals(1, output.size(), "expected a single line, got " + output);
+        assertArrayEquals(new int[]{0x2577, 0x20, 0xE9}, output.get(0).codePoints().toArray(),
+                "the line should be decoded as UTF-8 regardless of the default charset " + Charset.defaultCharset());
     }
 
     @Test
