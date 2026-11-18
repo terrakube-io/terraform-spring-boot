@@ -13,23 +13,22 @@ import java.lang.module.ModuleDescriptor.Version;
 import org.semver4j.Semver;
 import org.semver4j.range.RangeList;
 import org.semver4j.range.RangeListFactory;
-import org.springframework.core.io.buffer.DataBuffer;
-import org.springframework.core.io.buffer.DataBufferUtils;
-import org.springframework.http.MediaType;
-import org.springframework.http.client.reactive.ClientHttpRequest;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
-import org.springframework.web.reactive.function.client.WebClient;
+import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.timeout.ReadTimeoutException;
+import reactor.core.Exceptions;
 import reactor.core.publisher.Mono;
 import reactor.netty.http.client.HttpClient;
-import reactor.netty.http.client.HttpClientRequest;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
@@ -73,15 +72,11 @@ public class TerraformDownloader {
     public static final Duration DEFAULT_RELEASES_DOWNLOAD_TIMEOUT = Duration.ofMinutes(2);
     public static final Duration DEFAULT_BINARY_DOWNLOAD_TIMEOUT = Duration.ofMinutes(10);
 
-    // One client per process. WebClient and the Reactor Netty HttpClient are thread safe, so there is
-    // no need to build new ones for every download. They live in a holder so they are only created on
-    // the first download, not when the class is loaded.
-    private static final class WebClients {
-        private static final HttpClient HTTP_CLIENT = createHttpClient();
-        static final WebClient RELEASES = createWebClient(HTTP_CLIENT, "releases-downloader",
-                List.of(MediaType.APPLICATION_JSON));
-        static final WebClient BINARY = createWebClient(HTTP_CLIENT, "terraform-downloader",
-                List.of(MediaType.APPLICATION_OCTET_STREAM, MediaType.ALL));
+    // One client per process. The Reactor Netty HttpClient is thread safe, so there is no need to build a new
+    // one for every download. It lives in a holder so it is only created on the first download, not when the
+    // class is loaded. Reactor Netty's default event loops use daemon threads, so it does not keep the JVM alive.
+    private static final class HttpClients {
+        static final HttpClient CLIENT = createHttpClient();
     }
 
     // Makes sure we only cache the binaries for exactly specified versions, not for ranges
@@ -92,6 +87,8 @@ public class TerraformDownloader {
     private final Duration responseTimeout;
     private final Duration releasesDownloadTimeout;
     private final Duration binaryDownloadTimeout;
+    // null means the shared client, only the tests pass their own.
+    private final HttpClient httpClient;
     private File terraformDownloadDirectory;
 
     private File tofuDownloadDirectory;
@@ -118,7 +115,7 @@ public class TerraformDownloader {
 
     @FunctionalInterface
     private interface ReleasesFetcher {
-        void download(String releasesUrl, File releasesFile);
+        void download(String releasesUrl, File releasesFile) throws IOException;
     }
 
     @FunctionalInterface
@@ -141,6 +138,12 @@ public class TerraformDownloader {
      */
     public TerraformDownloader(String terraformReleasesUrl, String tofuReleasesUrl, Duration responseTimeout,
                                Duration releasesDownloadTimeout, Duration binaryDownloadTimeout) {
+        this(terraformReleasesUrl, tofuReleasesUrl, responseTimeout, releasesDownloadTimeout, binaryDownloadTimeout, null);
+    }
+
+    // For the tests: the shared client reads the proxy system properties once, when it is built.
+    TerraformDownloader(String terraformReleasesUrl, String tofuReleasesUrl, Duration responseTimeout,
+                        Duration releasesDownloadTimeout, Duration binaryDownloadTimeout, HttpClient httpClient) {
         log.info("Initialize TerraformDownloader using custom URL");
         log.debug("Terraform releases URL: {}", terraformReleasesUrl);
         log.debug("Tofu releases URL: {}", tofuReleasesUrl);
@@ -150,6 +153,7 @@ public class TerraformDownloader {
         this.responseTimeout = responseTimeout != null ? responseTimeout : DEFAULT_RESPONSE_TIMEOUT;
         this.releasesDownloadTimeout = releasesDownloadTimeout != null ? releasesDownloadTimeout : DEFAULT_RELEASES_DOWNLOAD_TIMEOUT;
         this.binaryDownloadTimeout = binaryDownloadTimeout != null ? binaryDownloadTimeout : DEFAULT_BINARY_DOWNLOAD_TIMEOUT;
+        this.httpClient = httpClient;
         log.debug("Download timeouts: response {}, releases {}, binary {}", this.responseTimeout,
                 this.releasesDownloadTimeout, this.binaryDownloadTimeout);
 
@@ -285,42 +289,84 @@ public class TerraformDownloader {
     }
     // End tests
 
-    private static HttpClient createHttpClient() {
+    // proxyWithSystemProperties() reads http(s).proxyHost/proxyPort/proxyUser/proxyPassword, http.nonProxyHosts
+    // and socksProxyHost once, when the client is built. For the shared client that is the first download.
+    static HttpClient createHttpClient() {
         return HttpClient.create()
                 .httpResponseDecoder(spec -> spec.maxHeaderSize(MAX_RESPONSE_HEADER_SIZE))
                 .followRedirect(true)
                 .proxyWithSystemProperties();
     }
 
-    private static WebClient createWebClient(HttpClient httpClient, String userAgent, List<MediaType> accept) {
-        return WebClient.builder()
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
-                .defaultHeaders(h -> {
-                    h.add("User-Agent", userAgent);
-                    h.setAccept(accept);
+    private void downloadReleasesToFile(String releasesUrl, File releasesFile) throws IOException {
+        downloadToFile(releasesUrl, releasesFile, "releases-downloader", "application/json", releasesDownloadTimeout);
+    }
+
+    /**
+     * Streams the response body to the file. Netty's response timeout cuts a response that sends no data for
+     * {@code responseTimeout}, and the whole download is cancelled after {@code downloadTimeout}, so a stuck
+     * server can never block the caller (or the RELEASES_LOCKS it holds). Cancelling closes the connection.
+     */
+    private void downloadToFile(String url, File file, String userAgent, String accept, Duration downloadTimeout)
+            throws IOException {
+        // Derived per call so the shared client can serve downloaders with different settings.
+        HttpClient client = (httpClient != null ? httpClient : HttpClients.CLIENT)
+                .responseTimeout(responseTimeout)
+                .headers(h -> h.set(HttpHeaderNames.USER_AGENT, userAgent).set(HttpHeaderNames.ACCEPT, accept));
+
+        Mono<Void> download = client.get()
+                .uri(url)
+                .response((response, body) -> {
+                    int status = response.status().code();
+                    // An error page is not a releases list or an archive, so it is never written to the file.
+                    if (status < 200 || status >= 300) {
+                        return Mono.<Void>error(new IOException(String.format("GET %s failed with HTTP status %d", url, status)));
+                    }
+                    return Mono.using(
+                            () -> FileChannel.open(file.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+                                    StandardOpenOption.TRUNCATE_EXISTING),
+                            // Each ByteBuf is written within onNext; Reactor Netty releases it once onNext returns.
+                            channel -> body.handle((buffer, sink) -> {
+                                try {
+                                    while (buffer.isReadable()) {
+                                        buffer.readBytes(channel, buffer.readableBytes());
+                                    }
+                                } catch (IOException e) {
+                                    sink.error(e);
+                                }
+                            }).then(),
+                            TerraformDownloader::closeQuietly);
                 })
-                .build();
-    }
-
-    // The response timeout is set per request, so the shared HttpClient can serve downloaders with different settings.
-    private void withResponseTimeout(ClientHttpRequest request) {
-        HttpClientRequest nativeRequest = request.getNativeRequest();
-        nativeRequest.responseTimeout(responseTimeout);
-    }
-
-    private void downloadReleasesToFile(String releasesUrl, File releasesFile) {
-        WebClients.RELEASES.get()
-                .uri(releasesUrl)
-                .httpRequest(this::withResponseTimeout)
-                .retrieve()
-                .onStatus(
-                        status -> !status.is2xxSuccessful(),
-                        clientResponse -> clientResponse.createException().flatMap(Mono::error)
-                )
-                .bodyToFlux(DataBuffer.class)
-                .as(dataBufferFlux -> DataBufferUtils.write(dataBufferFlux, releasesFile.toPath() ))
                 .then()
-                .block(releasesDownloadTimeout);
+                // Cancelling on timeout disposes the request, which closes the connection.
+                .timeout(downloadTimeout, Mono.error(() -> new IOException(
+                        String.format("Download of %s did not complete within %s", url, downloadTimeout))));
+
+        try {
+            download.block();
+        } catch (RuntimeException e) {
+            Throwable cause = Exceptions.unwrap(e);
+            if (cause instanceof InterruptedException) {
+                // block() cancels the download when interrupted.
+                Thread.currentThread().interrupt();
+                throw new InterruptedIOException("Interrupted while downloading " + url);
+            }
+            if (cause instanceof IOException) {
+                throw (IOException) cause;
+            }
+            if (cause instanceof ReadTimeoutException) {
+                throw new IOException(String.format("No data received from %s for %s", url, responseTimeout), cause);
+            }
+            throw new IOException("Unable to download " + url, cause);
+        }
+    }
+
+    private static void closeQuietly(FileChannel channel) {
+        try {
+            channel.close();
+        } catch (IOException e) {
+            log.warn("Unable to close {}: {}", channel, e.getMessage());
+        }
     }
 
     private String downloadFileOrReturnPathIfAlreadyExists(String fileName, String zipReleaseUrl, String version,
@@ -348,19 +394,9 @@ public class TerraformDownloader {
 
         log.info("Downloading {} from: {}", product, zipReleaseUrl);
         try {
-            WebClients.BINARY.get()
-                    .uri(zipReleaseUrl)
-                    .httpRequest(this::withResponseTimeout)
-                    .retrieve()
-                    .onStatus(
-                            status -> !status.is2xxSuccessful(),
-                            clientResponse -> clientResponse.createException().flatMap(Mono::error)
-                    )
-                    .bodyToFlux(DataBuffer.class)
-                    .as(dataBufferFlux -> DataBufferUtils.write(dataBufferFlux, zipFile.toPath()))
-                    .then()
-                    .block(binaryDownloadTimeout);
-        } catch (RuntimeException | OutOfMemoryError exception) {
+            downloadToFile(zipReleaseUrl, zipFile, "terraform-downloader", "application/octet-stream, */*",
+                    binaryDownloadTimeout);
+        } catch (IOException | RuntimeException | OutOfMemoryError exception) {
             // A partial archive would otherwise be picked up as an existing archive next time.
             FileUtils.deleteQuietly(zipFile);
             throw new IOException("Unable to download ".concat(zipReleaseUrl), exception);
