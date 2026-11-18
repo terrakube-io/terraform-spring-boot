@@ -3,6 +3,7 @@ package io.terrakube.terraform;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
@@ -398,7 +399,10 @@ public final class ProcessLauncher {
 
     private boolean readProcessStream(InputStream stream, Consumer<String> listener) {
         try {
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream))) {
+            // Not the platform charset: under LANG=C on Java 17 that is ASCII,
+            // and terraform's UTF-8 output (its box-drawing frame included)
+            // would arrive as '?'.
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream, StandardCharsets.UTF_8))) {
                 try {
                     String line;
                     while ((line = reader.readLine()) != null) {

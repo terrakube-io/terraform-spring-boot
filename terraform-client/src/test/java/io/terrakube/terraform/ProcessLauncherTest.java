@@ -7,6 +7,7 @@ import org.junit.jupiter.api.condition.DisabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -26,6 +27,7 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.BooleanSupplier;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -276,6 +278,28 @@ class ProcessLauncherTest {
         assertEquals("0", Files.readString(marker).trim(), "seq should have written all its output without a SIGPIPE");
         assertTrue(launcher.hasExited());
         assertEquals(1, calls.get(), "the listener must not be called again after it threw");
+    }
+
+    /**
+     * Regression test: output used to be decoded with the platform charset, so
+     * under LANG=C on Java 17 terraform's box-drawing frame and any non-ASCII
+     * text arrived as '?'. The expectation is spelled as code points, so it does
+     * not depend on how this source file or the JVM's default charset decode a
+     * literal. It can only fail where the default charset is not UTF-8, e.g. a
+     * Java 17 run under LANG=C.
+     */
+    @Test
+    void outputIsDecodedAsUtf8() throws Exception {
+        // U+2577 (terraform's "╷") and U+00E9 ("é"), as raw UTF-8 bytes.
+        ProcessLauncher launcher = new ProcessLauncher(POOL, "bash", "-c", "printf '\\xe2\\x95\\xb7 \\xc3\\xa9\\n'");
+        List<String> output = Collections.synchronizedList(new ArrayList<>());
+        launcher.setOutputListener(output::add);
+        int exitCode = launcher.launch().get(FUTURE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+
+        assertEquals(0, exitCode);
+        assertEquals(1, output.size(), "expected a single line, got " + output);
+        assertArrayEquals(new int[]{0x2577, 0x20, 0xE9}, output.get(0).codePoints().toArray(),
+                "the line should be decoded as UTF-8 regardless of the default charset " + Charset.defaultCharset());
     }
 
     @Test

@@ -92,6 +92,26 @@
                 </configuration>
             </plugin>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <executions>
+                    <!-- Reruns the UTF-8 decoding test under a non-UTF-8 default
+                         charset. Under C.UTF-8 or on JDK 18+ the default already
+                         is UTF-8, so the default execution cannot catch output
+                         being decoded with the platform charset. -->
+                    <execution>
+                        <id>non-utf8-default-charset</id>
+                        <goals>
+                            <goal>test</goal>
+                        </goals>
+                        <configuration>
+                            <test>ProcessLauncherTest#outputIsDecodedAsUtf8</test>
+                            <argLine>-Dfile.encoding=US-ASCII</argLine>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
                 <groupId>org.sonatype.central</groupId>
                 <artifactId>central-publishing-maven-plugin</artifactId>
                 <version>${central-publishing-maven-plugin.version}</version>
