@@ -54,6 +54,9 @@ public final class ProcessLauncher {
     private boolean inheritIO;
     private ExecutorService executor;
     private long timeoutSeconds;
+    // The first exception thrown while delivering either stream to its listener,
+    // reported through the launch future once the process has exited.
+    private final AtomicReference<Throwable> deliveryFailure = new AtomicReference<>();
 
     ProcessLauncher(ExecutorService executor, String... commands) {
         this(executor, null, commands);
@@ -66,8 +69,7 @@ public final class ProcessLauncher {
      *                        and never misses one that already has.
      */
     ProcessLauncher(ExecutorService executor, Consumer<ProcessLauncher> startedListener, String... commands) {
-        assert executor != null;
-        this.executor = executor;
+        this.executor = Objects.requireNonNull(executor, "executor");
         this.startedListener = startedListener;
         this.process = null;
         this.builder = new ProcessBuilder(commands);
@@ -75,32 +77,32 @@ public final class ProcessLauncher {
     }
 
 	void setOutputListener(Consumer<String> listener) {
-        assert this.process == null;
+        this.checkNotLaunched();
 		this.outputListener = listener;
     }
 
 	void setErrorListener(Consumer<String> listener) {
-        assert this.process == null;
+        this.checkNotLaunched();
 		this.errorListener = listener;
     }
     
     void setTimeoutSeconds(long timeoutSeconds) {
-        assert this.process == null;
+        this.checkNotLaunched();
         this.timeoutSeconds = timeoutSeconds;
     }
 
 	void setInheritIO(boolean inheritIO) {
-        assert this.process == null;
+        this.checkNotLaunched();
 		this.inheritIO = inheritIO;
     }
     
     void setDirectory(File directory) {
-        assert this.process == null;
+        this.checkNotLaunched();
         this.builder.directory(directory);
     }
     
     void setRedirectErrorStream(boolean redirectErrorStream) {
-        assert this.process == null;
+        this.checkNotLaunched();
         this.builder.redirectErrorStream(redirectErrorStream);
     }
 
@@ -114,13 +116,17 @@ public final class ProcessLauncher {
     }
 
     void setEnvironmentVariable(String name, String value) {
-        assert name != null && name.length() > 0;
+        if (!this.isUsableVariableName(name)) {
+            return;
+        }
         Map<String, String> env = this.builder.environment();
         value = (value != null ? env.put(name, value) : env.remove(name));
     }
 
     void setOrAppendEnvironmentVariable(String name, String value, String delimiter) {
-        assert name != null && name.length() > 0;
+        if (!this.isUsableVariableName(name)) {
+            return;
+        }
         if (value != null && value.length() > 0) {
             String current = System.getenv(name);
             String target = (current == null || current.length() == 0 ? value : String.join(delimiter, current, value));
@@ -131,6 +137,12 @@ public final class ProcessLauncher {
     /**
      * Starts the process and returns a future that completes with its exit
      * code once the output listeners have received the complete output.
+     *
+     * <p>A listener that throws stops neither the reading nor the process: it
+     * receives no further lines, the rest of its stream is read and discarded,
+     * and the returned future then completes exceptionally with the first
+     * exception a listener threw as its cause. That failure takes precedence
+     * over the exit code, which callers do not get even if it is zero.
      *
      * <p>If a timeout was set with {@link #setTimeoutSeconds(long)}, the process
      * and its descendants are terminated when it expires and the returned future
@@ -143,9 +155,18 @@ public final class ProcessLauncher {
      * {@link ExecutionException} from {@code get()}.
      */
     CompletableFuture<Integer> launch() {
-        assert this.process == null;
+        this.checkNotLaunched();
         if (this.inheritIO) {
             this.builder.inheritIO();
+        } else {
+            // Only a stream with a listener gets a reader below. A pipe nobody
+            // reads fills at ~64 KB and blocks the child in write() forever, so
+            // the others are discarded instead. PIPE is set explicitly too, so a
+            // launch retried after start() failed does not keep a DISCARD from
+            // the attempt before. With redirectErrorStream, stderr goes wherever
+            // stdout goes and its own redirect is ignored.
+            this.builder.redirectOutput(this.outputListener != null ? ProcessBuilder.Redirect.PIPE : ProcessBuilder.Redirect.DISCARD);
+            this.builder.redirectError(this.errorListener != null ? ProcessBuilder.Redirect.PIPE : ProcessBuilder.Redirect.DISCARD);
         }
         try {
             this.process = this.builder.start();
@@ -187,6 +208,14 @@ public final class ProcessLauncher {
                 // failure instead of silently missing output.
                 awaitStreamDrained(outputDone, "output");
                 awaitStreamDrained(errorDone, "error");
+                Throwable failure = this.deliveryFailure.get();
+                if (failure != null) {
+                    // A CompletionException is stored as is, so get() and join()
+                    // surface the listener's own exception as their cause. One
+                    // the listener threw itself is not wrapped a second time.
+                    throw failure instanceof CompletionException
+                            ? (CompletionException) failure : new CompletionException(failure);
+                }
                 return exitCode;
             } catch (InterruptedException ex) {
                 Thread.currentThread().interrupt();
@@ -216,6 +245,15 @@ public final class ProcessLauncher {
                         long drainBy = System.nanoTime() + TimeUnit.SECONDS.toNanos(TERMINATED_STREAM_DRAIN_TIMEOUT_SECONDS);
                         this.awaitTerminatedStreamDrained(outputDone, "output", drainBy);
                         this.awaitTerminatedStreamDrained(errorDone, "error", drainBy);
+                        // The caller gets the TimeoutException, so a listener
+                        // failure would otherwise vanish without a trace.
+                        // orTimeout() creates the exception for this future
+                        // alone, so attaching to it is safe.
+                        Throwable failure = this.deliveryFailure.get();
+                        if (failure != null) {
+                            ex.addSuppressed(failure);
+                            log.warn("Delivering the output of timed out process {} to its listeners failed", this.builder.command(), failure);
+                        }
                     }
                     // terminate() restores the interrupt flag for its caller's
                     // benefit; clear it again so a pooled thread does not carry
@@ -361,14 +399,49 @@ public final class ProcessLauncher {
     private boolean readProcessStream(InputStream stream, Consumer<String> listener) {
         try {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(stream))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    listener.accept(line);
+                try {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        listener.accept(line);
+                    }
+                } catch (RuntimeException | Error ex) {
+                    // Thrown by the listener, or an Error out of readLine() itself.
+                    // Keep draining: a reader that gives up closes the pipe and
+                    // the child dies of SIGPIPE on its next write - terraform in
+                    // the middle of an apply, holding its state lock. But stop
+                    // delivering: after an OutOfMemoryError, say, every further
+                    // line would land in the same exhausted buffer. Raw bytes,
+                    // so the drain builds no Strings; what the reader had already
+                    // buffered is dropped with them.
+                    this.deliveryFailure.compareAndSet(null, ex);
+                    stream.transferTo(OutputStream.nullOutputStream());
                 }
             }
             return true;
         } catch (IOException ex) {
             return false;
         }
+    }
+
+    private void checkNotLaunched() {
+        if (this.process != null) {
+            throw new IllegalStateException("The process has already been launched");
+        }
+    }
+
+    /**
+     * Rejects a null name, as ProcessBuilder always did, but only skips an empty
+     * one: the asserts that used to guard this were off in production, so an
+     * empty name in a user-defined workspace variable map was accepted and must
+     * not start failing jobs now.
+     */
+    private boolean isUsableVariableName(String name) {
+        Objects.requireNonNull(name, "name");
+        if (name.isEmpty()) {
+            // Never the value, which may be a secret.
+            log.warn("Ignoring an environment variable with an empty name for process {}", this.builder.command());
+            return false;
+        }
+        return true;
     }
 }
