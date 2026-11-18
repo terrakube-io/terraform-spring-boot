@@ -20,8 +20,8 @@ public class TerraformProperties {
     private boolean jsonOutput;
     private String terraformReleasesUrl;
     private String tofuReleasesUrl;
-    // Same defaults as TerraformDownloader.DEFAULT_*. Not referenced directly so that loading these
-    // properties does not load TerraformDownloader, which needs webflux on the classpath.
+    // Same defaults as TerraformDownloader.DEFAULT_*. Not referenced directly so that binding these
+    // properties does not load TerraformDownloader and, with it, Reactor Netty.
     // Max idle time between reads while downloading the releases list or a binary, e.g. 60s.
     private Duration downloadResponseTimeout = Duration.ofSeconds(60);
     // Max time to download the terraform/tofu releases list, e.g. 2m.

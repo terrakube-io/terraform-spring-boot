@@ -160,9 +160,17 @@
         </dependency>
 
         <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
-            <scope>provided</scope>
+            <groupId>io.projectreactor.netty</groupId>
+            <artifactId>reactor-netty-http</artifactId>
+            <exclusions>
+                <!-- ~12 MB of QUIC natives for HTTP/3, which the downloader never uses. netty-codec-http3 and
+                     netty-codec-classes-quic must stay: HttpClientSecure checks Quic.isAvailable() when it loads,
+                     which then just returns false. -->
+                <exclusion>
+                    <groupId>io.netty</groupId>
+                    <artifactId>netty-codec-native-quic</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <dependency>
