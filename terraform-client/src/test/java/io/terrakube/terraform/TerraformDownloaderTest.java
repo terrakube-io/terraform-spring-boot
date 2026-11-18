@@ -33,6 +33,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipEntry;
@@ -604,6 +605,227 @@ class TerraformDownloaderTest {
         String resolved = new TerraformDownloader(terraformUrl(), redirectUrl).resolveTofuVersion(">=1.0.0");
 
         assertEquals("1.12.4", resolved);
+    }
+
+    @Test
+    void releasesOnLaterPagesAreFoundByFollowingTheNextLink() {
+        List<String> queries = new CopyOnWriteArrayList<>();
+        // A GitHub Enterprise style path, so per_page is added.
+        String releasesPath = "/api/v3/repos/opentofu/opentofu/releases";
+        server.createContext(releasesPath, exchange -> {
+            String query = exchange.getRequestURI().getRawQuery();
+            queries.add(query);
+            if (query.contains("page=2")) {
+                respond(exchange, 200, "[" + tofuRelease("v1.8.3") + "," + tofuRelease("v1.8.0") + ","
+                        + tofuRelease("v1.6.0") + "]");
+                return;
+            }
+            String page2 = url(releasesPath + "?per_page=100&page=2");
+            exchange.getResponseHeaders().add("Link", "<" + page2 + ">; rel=\"next\", <" + page2 + ">; rel=\"last\"");
+            respond(exchange, 200, "[" + tofuRelease("v1.10.0") + "," + tofuRelease("v1.9.1") + "]");
+        });
+        TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), url(releasesPath));
+
+        assertEquals("v1.6.0", downloader.resolveTofuVersion("1.6.0"));
+        assertEquals("v1.8.3", downloader.resolveTofuVersion("~>1.8.0"));
+        assertEquals("v1.10.0", downloader.resolveTofuVersion(">=1.0.0"));
+        // Both pages are read once, into one cached list.
+        assertEquals(List.of("per_page=100", "per_page=100&page=2"), queries);
+    }
+
+    @Test
+    void perPageIsAddedOnlyForGitHubAndOnlyWhenTheUrlHasNone() {
+        List<String> gitHubQueries = new CopyOnWriteArrayList<>();
+        List<String> mirrorQueries = new CopyOnWriteArrayList<>();
+        server.createContext("/api/v3/", exchange -> {
+            gitHubQueries.add(exchange.getRequestURI().getRawQuery());
+            respond(exchange, 200, TOFU_RELEASES);
+        });
+        server.createContext("/signed.json", exchange -> {
+            mirrorQueries.add(exchange.getRequestURI().getRawQuery());
+            respond(exchange, 200, TOFU_RELEASES);
+        });
+
+        // per_page goes into the query, before the fragment.
+        assertEquals("1.12.4", new TerraformDownloader(terraformUrl(), url("/api/v3/repos/o/r/releases?foo=1#top"))
+                .resolveTofuVersion(">=1.0.0"));
+        assertEquals("1.12.4", new TerraformDownloader(terraformUrl(), url("/api/v3/repos/o/r/releases?per_page=10"))
+                .resolveTofuVersion(">=1.0.0"));
+        // A pre-signed mirror URL signs its query, so it must be requested exactly as configured.
+        assertEquals("1.12.4", new TerraformDownloader(terraformUrl(), url("/signed.json?X-Amz-Signature=abc"))
+                .resolveTofuVersion(">=1.0.0"));
+
+        assertEquals(List.of("foo=1&per_page=100", "per_page=10"), gitHubQueries);
+        assertEquals(List.of("X-Amz-Signature=abc"), mirrorQueries);
+    }
+
+    @Test
+    void laterPageFailureKeepsThePagesReadSoFar() {
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext("/tofu-partial.json", exchange -> {
+            requests.incrementAndGet();
+            if ("page=2".equals(exchange.getRequestURI().getRawQuery())) {
+                // Like GitHub's rate limit kicking in halfway.
+                respond(exchange, 403, "{}");
+                return;
+            }
+            exchange.getResponseHeaders().add("Link", "<" + url("/tofu-partial.json?page=2") + ">; rel=\"next\"");
+            respond(exchange, 200, "[" + tofuRelease("v1.10.0") + "]");
+        });
+        TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), url("/tofu-partial.json"));
+
+        assertEquals("v1.10.0", downloader.resolveTofuVersion("1.10.0"));
+        assertThrows(IllegalArgumentException.class, () -> downloader.resolveTofuVersion("1.6.0"));
+        assertEquals(2, requests.get());
+    }
+
+    @Test
+    void partialRefreshIsMergedWithThePreviousList() {
+        AtomicInteger requests = new AtomicInteger();
+        AtomicBoolean refreshed = new AtomicBoolean();
+        server.createContext("/tofu-merge.json", exchange -> {
+            requests.incrementAndGet();
+            if ("page=2".equals(exchange.getRequestURI().getRawQuery())) {
+                if (refreshed.get()) {
+                    respond(exchange, 403, "{}");
+                } else {
+                    respond(exchange, 200, "[" + tofuRelease("v1.6.0") + "]");
+                }
+                return;
+            }
+            exchange.getResponseHeaders().add("Link", "<" + url("/tofu-merge.json?page=2") + ">; rel=\"next\"");
+            String page1 = refreshed.get() ? tofuRelease("v1.11.0") + "," + tofuRelease("v1.10.0") : tofuRelease("v1.10.0");
+            respond(exchange, 200, "[" + page1 + "]");
+        });
+        TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), url("/tofu-merge.json"));
+        assertEquals("v1.6.0", downloader.resolveTofuVersion("1.6.0"));
+
+        TerraformDownloader.expireReleasesCache();
+        // A new release on page 1, and the rate limit hits on page 2.
+        refreshed.set(true);
+
+        assertEquals("v1.11.0", downloader.resolveTofuVersion("1.11.0"));
+        assertEquals("v1.6.0", downloader.resolveTofuVersion("1.6.0"));
+        assertEquals(4, requests.get());
+    }
+
+    @Test
+    void linkHeadersAreReadTogetherAndRelIsMatchedAsAToken() {
+        AtomicInteger decoyRequests = new AtomicInteger();
+        server.createContext("/decoy.json", exchange -> {
+            decoyRequests.incrementAndGet();
+            respond(exchange, 200, "[" + tofuRelease("v9.0.0") + "]");
+        });
+        server.createContext("/tofu-links.json", exchange -> {
+            if ("page=2".equals(exchange.getRequestURI().getRawQuery())) {
+                respond(exchange, 200, "[" + tofuRelease("v1.6.0") + "]");
+                return;
+            }
+            String page2 = url("/tofu-links.json?page=2");
+            // Only the second header has the next link, and "next-page" is not "next".
+            exchange.getResponseHeaders().add("Link", "<" + url("/decoy.json") + ">; rel=\"next-page\", <" + page2 + ">; rel=\"last\"");
+            exchange.getResponseHeaders().add("Link", "<" + page2 + ">; rel=\"last next\"");
+            respond(exchange, 200, "[" + tofuRelease("v1.10.0") + "]");
+        });
+        TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), url("/tofu-links.json"));
+
+        assertEquals("v1.6.0", downloader.resolveTofuVersion("1.6.0"));
+        assertEquals("v1.10.0", downloader.resolveTofuVersion(">=1.0.0"));
+        assertEquals(0, decoyRequests.get());
+    }
+
+    @Test
+    void nextLinkBackToAVisitedPageStopsPaging() {
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext("/tofu-loop.json", exchange -> {
+            requests.incrementAndGet();
+            boolean page2 = "page=2".equals(exchange.getRequestURI().getRawQuery());
+            String next = page2 ? url("/tofu-loop.json") : url("/tofu-loop.json?page=2");
+            exchange.getResponseHeaders().add("Link", "<" + next + ">; rel=\"next\"");
+            respond(exchange, 200, "[" + tofuRelease(page2 ? "v1.6.0" : "v1.10.0") + "]");
+        });
+        TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), url("/tofu-loop.json"));
+
+        assertEquals("v1.6.0", downloader.resolveTofuVersion("1.6.0"));
+        assertEquals("v1.10.0", downloader.resolveTofuVersion("1.10.0"));
+        assertEquals(2, requests.get());
+    }
+
+    @Test
+    void nextLinksThatNeverEndStopAtThePageCap() {
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext("/tofu-endless.json", exchange -> {
+            int page = requests.incrementAndGet();
+            exchange.getResponseHeaders().add("Link", "<" + url("/tofu-endless.json?page=" + (page + 1)) + ">; rel=\"next\"");
+            respond(exchange, 200, "[" + tofuRelease("v1.0." + page) + "]");
+        });
+
+        String resolved = new TerraformDownloader(terraformUrl(), url("/tofu-endless.json")).resolveTofuVersion(">=1.0.0");
+
+        assertEquals("v1.0.20", resolved);
+        assertEquals(20, requests.get());
+    }
+
+    @Test
+    void releasesDownloadTimeoutCapsAllPagesTogether() {
+        AtomicInteger requests = new AtomicInteger();
+        server.createContext("/tofu-slow-pages.json", exchange -> {
+            int page = requests.incrementAndGet();
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            exchange.getResponseHeaders().add("Link", "<" + url("/tofu-slow-pages.json?page=" + (page + 1)) + ">; rel=\"next\"");
+            respond(exchange, 200, "[" + tofuRelease("v1.0." + page) + "]");
+        });
+        // Each page is well within the timeout. A cap per page would read all 20 pages (10s), the cap on all
+        // pages together stops after about 4 and keeps what was read.
+        TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), url("/tofu-slow-pages.json"),
+                null, Duration.ofSeconds(2), null);
+
+        assertTimeoutPreemptively(Duration.ofSeconds(15), () ->
+                assertEquals("v1.0.1", downloader.resolveTofuVersion("1.0.1")));
+        assertTrue(requests.get() >= 1 && requests.get() < 10, "Pages requested: " + requests.get());
+    }
+
+    @Test
+    void tagNameIsMatchedRatherThanTheReleaseNameAndDraftsAreIgnored() {
+        String releases = "[{\"name\":\"OpenTofu v1.12.4\",\"tag_name\":\"v1.12.4\",\"assets\":[]},"
+                + "{\"name\":\"v9.9.9\",\"tag_name\":\"v1.11.0\",\"assets\":[]},"
+                + "{\"name\":\"v1.13.0\",\"tag_name\":\"v1.13.0\",\"draft\":true,\"assets\":[]}]";
+        server.createContext("/tofu-tags.json", exchange -> respond(exchange, 200, releases));
+        TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), url("/tofu-tags.json"));
+
+        assertEquals("v1.12.4", downloader.resolveTofuVersion(">=1.0.0"));
+        assertEquals("v1.11.0", downloader.resolveTofuVersion("1.11.0"));
+        assertThrows(IllegalArgumentException.class, () -> downloader.resolveTofuVersion("9.9.9"));
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void existingVPrefixedInstallIsReusedWhenARangeResolvesToItsTag() throws IOException {
+        File binary = home.resolve(".terraform-spring-boot/tofu/v1.12.4/tofu").toFile();
+        Files.createDirectories(binary.getParentFile().toPath());
+        Files.writeString(binary.toPath(), "#!/bin/sh\n");
+        binary.setExecutable(true, true);
+        AtomicInteger assetRequests = new AtomicInteger();
+        server.createContext("/tofu-1.12.4.zip", exchange -> {
+            assetRequests.incrementAndGet();
+            respond(exchange, 404, "{}");
+        });
+        String releases = "[{\"name\":\"OpenTofu 1.12.4\",\"tag_name\":\"v1.12.4\",\"assets\":[{\"name\":\""
+                + tofuAssetName("1.12.4") + "\",\"browser_download_url\":\"" + url("/tofu-1.12.4.zip") + "\"}]}]";
+        server.createContext("/tofu-installed.json", exchange -> respond(exchange, 200, releases));
+
+        String path = new TerraformDownloader(terraformUrl(), url("/tofu-installed.json")).downloadTofuVersion("~>1.12.0");
+
+        assertEquals(binary.getAbsolutePath(), path);
+        assertEquals(0, assetRequests.get());
+    }
+
+    private static String tofuRelease(String tag) {
+        return "{\"name\":\"" + tag + "\",\"tag_name\":\"" + tag + "\",\"assets\":[]}";
     }
 
     private void awaitRelease() {

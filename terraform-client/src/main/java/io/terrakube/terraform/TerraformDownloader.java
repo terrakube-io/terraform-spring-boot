@@ -14,6 +14,7 @@ import org.semver4j.Semver;
 import org.semver4j.range.RangeList;
 import org.semver4j.range.RangeListFactory;
 import io.netty.handler.codec.http.HttpHeaderNames;
+import io.netty.handler.codec.http.HttpHeaders;
 import io.netty.handler.timeout.ReadTimeoutException;
 import reactor.core.Exceptions;
 import reactor.core.publisher.Mono;
@@ -24,6 +25,8 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -34,6 +37,9 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BinaryOperator;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
@@ -58,6 +64,15 @@ public class TerraformDownloader {
     // This along with the cache also means we can fall back on the cached list if we hit the rate limit, so it should help fix a bunch of rate limit issues
     private static final Duration RELEASES_CACHE_TTL = Duration.ofMinutes(30);
     private static final Duration RELEASES_RETRY_AFTER_FAILURE = Duration.ofMinutes(1);
+
+    // GitHub returns 30 releases per page unless asked for more (100 at most), so without paging only the
+    // newest 30 tofu releases could be resolved. The page cap is a safety net against a next link that never ends.
+    private static final int TOFU_RELEASES_PER_PAGE = 100;
+    private static final int TOFU_RELEASES_MAX_PAGES = 20;
+    // One link-value of a Link header: the URL, then its parameters up to the next link.
+    private static final Pattern LINK_VALUE = Pattern.compile("<([^>]*)>([^<]*)");
+    private static final Pattern LINK_REL = Pattern.compile("(?:^|;)\\s*rel\\s*=\\s*(?:\"([^\"]*)\"|([^\\s;,]+))",
+            Pattern.CASE_INSENSITIVE);
 
     private static final ConcurrentMap<String, CachedReleases<?>> RELEASES_CACHE = new ConcurrentHashMap<>();
     private static final ConcurrentMap<String, Object> RELEASES_LOCKS = new ConcurrentHashMap<>();
@@ -115,7 +130,10 @@ public class TerraformDownloader {
 
     @FunctionalInterface
     private interface ReleasesFetcher {
-        void download(String releasesUrl, File releasesFile) throws IOException;
+        /**
+         * @return false when only part of the list could be downloaded, so it is cached only briefly
+         */
+        boolean download(String releasesUrl, File releasesFile) throws IOException;
     }
 
     @FunctionalInterface
@@ -215,24 +233,54 @@ public class TerraformDownloader {
             }
             log.info("Found {} terraform releases", response.getVersions().size());
             return response;
-        });
+        }, null);
     }
 
     private List<TofuRelease> getTofuReleases() {
-        return getCachedReleases("tofu", tofuReleasesUrl, this::downloadReleasesToFile, releasesFile -> {
-            List<TofuRelease> releases = OBJECT_MAPPER.readValue(releasesFile,
-                    OBJECT_MAPPER.getTypeFactory().constructCollectionType(List.class, TofuRelease.class));
-            if (releases == null) {
-                throw new IOException("Tofu releases response is empty");
-            }
+        return getCachedReleases("tofu", tofuReleasesUrl, this::downloadTofuReleasesToFile, releasesFile -> {
+            List<TofuRelease> releases = readTofuReleases(releasesFile);
             log.info("Found {} tofu releases", releases.size());
             return releases;
-        });
+        }, TerraformDownloader::mergeTofuReleases);
+    }
+
+    // The partial pages hold the newest releases, the previous list the older ones. A fetched entry wins over a
+    // cached one with the same version.
+    private static List<TofuRelease> mergeTofuReleases(List<TofuRelease> partial, List<TofuRelease> previous) {
+        List<TofuRelease> merged = new ArrayList<>(partial);
+        Set<String> versions = new HashSet<>();
+        for (TofuRelease release : partial) {
+            String version = tofuReleaseVersion(release);
+            if (version != null) {
+                versions.add(withoutVPrefix(version));
+            }
+        }
+        for (TofuRelease release : previous) {
+            String version = tofuReleaseVersion(release);
+            if (version != null && versions.add(withoutVPrefix(version))) {
+                merged.add(release);
+            }
+        }
+        log.info("Merged {} fetched tofu releases with the previous list into {} releases", partial.size(), merged.size());
+        return merged;
+    }
+
+    private static List<TofuRelease> readTofuReleases(File releasesFile) throws IOException {
+        List<TofuRelease> releases = OBJECT_MAPPER.readValue(releasesFile,
+                OBJECT_MAPPER.getTypeFactory().constructCollectionType(List.class, TofuRelease.class));
+        if (releases == null) {
+            throw new IOException("Tofu releases response is empty");
+        }
+        return releases;
     }
 
     @SuppressWarnings("unchecked")
+    /**
+     * @param merger combines a partial list (first argument) with the previous list, {@code null} for a list
+     *               that is never partial
+     */
     private static <T> T getCachedReleases(String product, String releasesUrl, ReleasesFetcher fetcher,
-                                           ReleasesParser<T> parser) {
+                                           ReleasesParser<T> parser, BinaryOperator<T> merger) {
         String key = product + "|" + releasesUrl;
         CachedReleases<T> cached = (CachedReleases<T>) RELEASES_CACHE.get(key);
         if (cached != null && cached.isFresh()) {
@@ -248,9 +296,9 @@ public class TerraformDownloader {
             }
 
             try {
-                T releases = fetchReleases(product, releasesUrl, fetcher, parser);
-                RELEASES_CACHE.put(key, new CachedReleases<>(releases, Instant.now().plus(RELEASES_CACHE_TTL)));
-                return releases;
+                CachedReleases<T> fetched = fetchReleases(product, releasesUrl, fetcher, parser, merger, cached);
+                RELEASES_CACHE.put(key, fetched);
+                return fetched.releases();
             } catch (Exception | OutOfMemoryError e) {
                 // OutOfMemoryError is caught on purpose: Netty throws io.netty.util.internal.OutOfDirectMemoryError
                 // when direct memory runs out. That says nothing about the heap, and failing here (or falling
@@ -265,15 +313,25 @@ public class TerraformDownloader {
         }
     }
 
-    private static <T> T fetchReleases(String product, String releasesUrl, ReleasesFetcher fetcher,
-                                       ReleasesParser<T> parser) throws IOException {
+    private static <T> CachedReleases<T> fetchReleases(String product, String releasesUrl, ReleasesFetcher fetcher,
+                                                       ReleasesParser<T> parser, BinaryOperator<T> merger,
+                                                       CachedReleases<T> previous) throws IOException {
         log.info("Downloading {} releases list from {}", product, releasesUrl);
         Path tempDirectory = Files.createDirectories(
                 Paths.get(FileUtils.getTempDirectory().getAbsolutePath(), UUID.randomUUID().toString()));
         try {
             File releasesFile = tempDirectory.resolve(product + "-releases.json").toFile();
-            fetcher.download(releasesUrl, releasesFile);
-            return parser.parse(releasesFile);
+            boolean complete = fetcher.download(releasesUrl, releasesFile);
+            T releases = parser.parse(releasesFile);
+            if (complete) {
+                return new CachedReleases<>(releases, Instant.now().plus(RELEASES_CACHE_TTL));
+            }
+            // A partial list must not drop what the previous list had, and it is refreshed as soon as a
+            // failed fetch would be.
+            if (previous != null && merger != null) {
+                releases = merger.apply(releases, previous.releases());
+            }
+            return new CachedReleases<>(releases, Instant.now().plus(RELEASES_RETRY_AFTER_FAILURE));
         } finally {
             FileUtils.deleteQuietly(tempDirectory.toFile());
         }
@@ -298,22 +356,150 @@ public class TerraformDownloader {
                 .proxyWithSystemProperties();
     }
 
-    private void downloadReleasesToFile(String releasesUrl, File releasesFile) throws IOException {
+    private boolean downloadReleasesToFile(String releasesUrl, File releasesFile) throws IOException {
         downloadToFile(releasesUrl, releasesFile, "releases-downloader", "application/json", releasesDownloadTimeout);
+        return true;
+    }
+
+    /**
+     * Downloads the whole tofu releases list into the file, following the {@code Link: <...>; rel="next"}
+     * header page by page. A response without a next link, such as a mirror serving a static file, is the
+     * whole list and is kept as downloaded. The releases download timeout caps all pages together, not each
+     * page, so paging never holds the RELEASES_LOCKS longer than a single download could before.
+     * If a later page fails (e.g. the rate limit is hit halfway), the pages read so far are kept and reported
+     * as a partial list; only a failure of the first page fails the download.
+     */
+    private boolean downloadTofuReleasesToFile(String releasesUrl, File releasesFile) throws IOException {
+        Instant deadline = Instant.now().plus(releasesDownloadTimeout);
+        String pageUrl = withTofuReleasesPerPage(releasesUrl);
+        Set<String> visitedPageUrls = new HashSet<>();
+        visitedPageUrls.add(pageUrl);
+        List<TofuRelease> releases = new ArrayList<>();
+        boolean complete = true;
+        for (int page = 1; ; page++) {
+            // The URL the page came from in the end, after any redirects.
+            String responseUrl = pageUrl;
+            String nextPageUrl;
+            try {
+                Duration remaining = Duration.between(Instant.now(), deadline);
+                if (remaining.isNegative() || remaining.isZero()) {
+                    throw new IOException(String.format("Download of %s did not complete within %s", releasesUrl,
+                            releasesDownloadTimeout));
+                }
+                FinalResponse response = downloadToFile(pageUrl, releasesFile, "releases-downloader",
+                        "application/json", remaining);
+                if (response.url != null) {
+                    responseUrl = response.url;
+                }
+                nextPageUrl = nextPageUrl(responseUrl, String.join(",", response.headers.getAll("Link")));
+                if (page == 1 && nextPageUrl == null) {
+                    return true;
+                }
+                releases.addAll(readTofuReleases(releasesFile));
+            } catch (InterruptedIOException e) {
+                throw e;
+            } catch (IOException e) {
+                if (page == 1) {
+                    throw e;
+                }
+                log.warn("Unable to read page {} of the tofu releases from {}, using the {} releases read so far: {}",
+                        page, pageUrl, releases.size(), e.getMessage());
+                complete = false;
+                break;
+            }
+            if (nextPageUrl == null) {
+                break;
+            }
+            if (!visitedPageUrls.add(nextPageUrl)) {
+                log.warn("Stopped reading tofu releases from {}: page {} links back to {}", releasesUrl, page, nextPageUrl);
+                break;
+            }
+            if (responseUrl.regionMatches(true, 0, "https:", 0, 6) && nextPageUrl.regionMatches(true, 0, "http:", 0, 5)) {
+                log.warn("Stopped reading tofu releases from {}: page {} links from https to {}", releasesUrl, page, nextPageUrl);
+                break;
+            }
+            if (page == TOFU_RELEASES_MAX_PAGES) {
+                log.warn("Stopped reading tofu releases from {} after {} pages, older releases are not listed",
+                        releasesUrl, TOFU_RELEASES_MAX_PAGES);
+                break;
+            }
+            pageUrl = nextPageUrl;
+        }
+        OBJECT_MAPPER.writeValue(releasesFile, releases);
+        return complete;
+    }
+
+    /**
+     * Asks GitHub for its largest page, unless the URL already chose a page size. Any other URL is requested
+     * exactly as configured: a pre-signed S3/GCS URL signs its query string and would be rejected otherwise.
+     */
+    private static String withTofuReleasesPerPage(String releasesUrl) {
+        URI uri;
+        try {
+            uri = new URI(releasesUrl);
+        } catch (URISyntaxException e) {
+            // Netty may still accept it, so it is used as it is.
+            return releasesUrl;
+        }
+        String path = uri.getRawPath();
+        boolean gitHub = "api.github.com".equalsIgnoreCase(uri.getHost()) || (path != null && path.startsWith("/api/v3/"));
+        String query = uri.getRawQuery();
+        if (!gitHub || (query != null && Arrays.stream(query.split("&"))
+                .anyMatch(p -> p.equals("per_page") || p.startsWith("per_page=")))) {
+            return releasesUrl;
+        }
+        int fragmentStart = releasesUrl.indexOf('#');
+        String withoutFragment = fragmentStart < 0 ? releasesUrl : releasesUrl.substring(0, fragmentStart);
+        String fragment = fragmentStart < 0 ? "" : releasesUrl.substring(fragmentStart);
+        String separator = query == null ? "?" : query.isEmpty() ? "" : "&";
+        return withoutFragment + separator + "per_page=" + TOFU_RELEASES_PER_PAGE + fragment;
+    }
+
+    // Finds the link whose rel has the "next" token. A relative link is resolved against the page it came from.
+    private static String nextPageUrl(String pageUrl, String linkHeader) {
+        Matcher link = LINK_VALUE.matcher(linkHeader);
+        while (link.find()) {
+            Matcher rel = LINK_REL.matcher(link.group(2));
+            if (rel.find()) {
+                String relValue = rel.group(1) != null ? rel.group(1) : rel.group(2);
+                if (Arrays.stream(relValue.trim().split("\\s+")).anyMatch("next"::equalsIgnoreCase)) {
+                    try {
+                        return new URI(pageUrl).resolve(link.group(1).trim()).toString();
+                    } catch (URISyntaxException | IllegalArgumentException e) {
+                        log.warn("Ignoring next page link {} from {}: {}", link.group(1), pageUrl, e.getMessage());
+                        return null;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static final class FinalResponse {
+        private final String url;
+        private final HttpHeaders headers;
+
+        FinalResponse(String url, HttpHeaders headers) {
+            this.url = url;
+            this.headers = headers;
+        }
     }
 
     /**
      * Streams the response body to the file. Netty's response timeout cuts a response that sends no data for
      * {@code responseTimeout}, and the whole download is cancelled after {@code downloadTimeout}, so a stuck
      * server can never block the caller (or the RELEASES_LOCKS it holds). Cancelling closes the connection.
+     *
+     * @return the URL and headers of the final response, after any redirects
      */
-    private void downloadToFile(String url, File file, String userAgent, String accept, Duration downloadTimeout)
+    private FinalResponse downloadToFile(String url, File file, String userAgent, String accept, Duration downloadTimeout)
             throws IOException {
         // Derived per call so the shared client can serve downloaders with different settings.
         HttpClient client = (httpClient != null ? httpClient : HttpClients.CLIENT)
                 .responseTimeout(responseTimeout)
                 .headers(h -> h.set(HttpHeaderNames.USER_AGENT, userAgent).set(HttpHeaderNames.ACCEPT, accept));
 
+        AtomicReference<FinalResponse> finalResponse = new AtomicReference<>();
         Mono<Void> download = client.get()
                 .uri(url)
                 .response((response, body) -> {
@@ -322,6 +508,7 @@ public class TerraformDownloader {
                     if (status < 200 || status >= 300) {
                         return Mono.<Void>error(new IOException(String.format("GET %s failed with HTTP status %d", url, status)));
                     }
+                    finalResponse.set(new FinalResponse(response.resourceUrl(), response.responseHeaders()));
                     return Mono.using(
                             () -> FileChannel.open(file.toPath(), StandardOpenOption.CREATE, StandardOpenOption.WRITE,
                                     StandardOpenOption.TRUNCATE_EXISTING),
@@ -344,6 +531,7 @@ public class TerraformDownloader {
 
         try {
             download.block();
+            return finalResponse.get();
         } catch (RuntimeException e) {
             Throwable cause = Exceptions.unwrap(e);
             if (cause instanceof InterruptedException) {
@@ -546,25 +734,42 @@ public class TerraformDownloader {
      * downloading anything.
      */
     public String resolveTofuVersion(String tofuVersion) {
-        Set<String> allTofuKeys = getTofuReleases().stream().map(TofuRelease::getName).collect(Collectors.toSet());
+        Set<String> allTofuKeys = getTofuReleases().stream()
+                .filter(release -> !release.isDraft())
+                .map(TerraformDownloader::tofuReleaseVersion)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
         try {
             RangeList versionRangeList = RangeListFactory.create(tofuVersion);
 
             return allTofuKeys.stream()
                     .filter(v -> {
                         try {
-                            Semver tempVersion = new Semver(v);
+                            Semver tempVersion = new Semver(withoutVPrefix(v));
                             return tempVersion.satisfies(versionRangeList);
                         } catch (IllegalArgumentException e) {
                             return false;
                         }
                     })
-                    .max(Comparator.comparing(Semver::new))
+                    .max(Comparator.comparing((String v) -> new Semver(withoutVPrefix(v))))
                     .orElseThrow(() -> new IllegalArgumentException("Not valid tofu version format"));
         } catch (Exception e) {
             log.error("Error parsing tofu version range: {}", e.getMessage());
             throw new IllegalArgumentException("Invalid tofu version range");
         }
+    }
+
+    // The tag is the version a release is published as, its name is free text that can differ. The resolved
+    // version stays the raw tag (e.g. "v1.13.9"), so the install directory is the same as it has always been.
+    // A mirror that only serves names keeps working.
+    private static String tofuReleaseVersion(TofuRelease release) {
+        String tag = release.getTag_name();
+        return tag != null && !tag.isBlank() ? tag.trim() : release.getName();
+    }
+
+    private static String withoutVPrefix(String version) {
+        String trimmed = version.trim();
+        return trimmed.startsWith("v") || trimmed.startsWith("V") ? trimmed.substring(1) : trimmed;
     }
 
     public String downloadTofuVersion(String tofuVersion) throws IOException {
@@ -581,16 +786,18 @@ public class TerraformDownloader {
         tofuVersion = resolveTofuVersion(tofuVersion);
 
         log.info("Tofu version is \" {} \"", tofuVersion);
-        String finalTofuVersion = tofuVersion;
-        List<TofuRelease> releases = getTofuReleases().stream()
-                .filter(release -> release.getName().equals(finalTofuVersion))
-                .toList();
+        String finalTofuVersion = withoutVPrefix(tofuVersion);
+        // The first match, not exactly one: a release published while the pages were read shows up on two pages.
+        TofuRelease release = getTofuReleases().stream()
+                .filter(r -> !r.isDraft())
+                .filter(r -> {
+                    String version = tofuReleaseVersion(r);
+                    return version != null && withoutVPrefix(version).equals(finalTofuVersion);
+                })
+                .findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("Invalid Tofu Version"));
 
-        if (releases.size() != 1) {
-            throw new IllegalArgumentException("Invalid Tofu Version");
-        }
-
-        List<TofuAsset> assets = releases.get(0).getAssets().stream().filter(asset -> asset.getName().endsWith(".zip"))
+        List<TofuAsset> assets = release.getAssets().stream().filter(asset -> asset.getName().endsWith(".zip"))
                 .toList();
 
         boolean notFound = true;
@@ -776,6 +983,8 @@ class TerraformVersion {
 @JsonIgnoreProperties(ignoreUnknown = true)
 class TofuRelease {
     private String name;
+    private String tag_name;
+    private boolean draft;
     private List<TofuAsset> assets;
 }
 
