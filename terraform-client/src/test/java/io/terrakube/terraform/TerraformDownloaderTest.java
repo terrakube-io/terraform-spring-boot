@@ -23,11 +23,13 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -38,7 +40,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -232,7 +236,7 @@ class TerraformDownloaderTest {
 
     @Test
     @DisabledOnOs(OS.WINDOWS)
-    void binaryDownloadThatStallsFailsAndRemovesThePartialArchive() {
+    void binaryDownloadThatStallsFailsAndRemovesThePartialArchive() throws IOException {
         server.createContext("/stalling.zip", exchange -> {
             exchange.sendResponseHeaders(200, 0);
             OutputStream out = exchange.getResponseBody();
@@ -249,6 +253,7 @@ class TerraformDownloaderTest {
                 assertThrows(IOException.class, () -> downloader.downloadTofuVersion("1.13.0")));
         File zipFile = home.resolve(".terraform-spring-boot/download/tofu/" + tofuAssetName("1.13.0")).toFile();
         assertFalse(zipFile.exists(), "Partial archive should be deleted");
+        assertNoLeftovers();
     }
 
     @Test
@@ -566,7 +571,7 @@ class TerraformDownloaderTest {
     void downloadTofuVersionFollowsRedirectWithHeadersAbove8KiB() throws IOException {
         TerraformDownloader downloader = new TerraformDownloader(terraformUrl(), tofuUrl());
         String os = downloader.getOs();
-        String arch = "aarch64".equals(SystemUtils.OS_ARCH) ? "arm64" : SystemUtils.OS_ARCH;
+        String arch = platformArch();
 
         byte[] zipBytes = createZipWithEntry("tofu", "#!/bin/sh\necho tofu\n");
 
@@ -828,6 +833,177 @@ class TerraformDownloaderTest {
         return "{\"name\":\"" + tag + "\",\"tag_name\":\"" + tag + "\",\"assets\":[]}";
     }
 
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void truncatedArchiveLeavesNothingBehindAndALaterAttemptSucceeds() throws Exception {
+        byte[] binaryContent = randomBytes(64 * 1024);
+        byte[] zip = createZip(List.of(Map.entry("terraform", binaryContent)));
+        // Cut in the middle of the binary, with a matching Content-Length, so the download itself succeeds.
+        AtomicReference<byte[]> served = new AtomicReference<>(Arrays.copyOf(zip, zip.length / 2));
+        server.createContext("/terraform.zip", exchange -> respond(exchange, 200, served.get(), "application/octet-stream"));
+        String releasesUrl = terraformReleasesWithBuild("1.9.8", url("/terraform.zip"));
+        TerraformDownloader downloader = new TerraformDownloader(releasesUrl, tofuUrl());
+
+        assertThrows(IOException.class, () -> downloader.downloadTerraformVersion("1.9.8"));
+        assertFalse(terraformBinary("1.9.8").exists(), "Nothing should be installed");
+        assertFalse(terraformBinary("1.9.8").getParentFile().exists(), "No version directory should be created");
+        assertFalse(home.resolve(".terraform-spring-boot/download/" + terraformArchiveName("1.9.8")).toFile().exists(),
+                "Broken archive should be deleted");
+        assertNoLeftovers();
+
+        served.set(zip);
+        String path = downloader.downloadTerraformVersion("1.9.8");
+
+        assertEquals(terraformBinary("1.9.8").getAbsolutePath(), path);
+        assertArrayEquals(binaryContent, Files.readAllBytes(Path.of(path)));
+        assertTrue(new File(path).canExecute(), "Binary should be executable");
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void onlyTheProductBinaryIsMadeExecutable() throws Exception {
+        byte[] zip = createZip(List.of(
+                Map.entry("LICENSE.txt", "license".getBytes(StandardCharsets.UTF_8)),
+                Map.entry("terraform", "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8)),
+                Map.entry("docs/README.md", "readme".getBytes(StandardCharsets.UTF_8))));
+        server.createContext("/terraform.zip", exchange -> respond(exchange, 200, zip, "application/octet-stream"));
+        String releasesUrl = terraformReleasesWithBuild("1.9.8", url("/terraform.zip"));
+
+        File binary = new File(new TerraformDownloader(releasesUrl, tofuUrl()).downloadTerraformVersion("1.9.8"));
+
+        assertTrue(binary.canExecute(), "Binary should be executable");
+        File license = new File(binary.getParentFile(), "LICENSE.txt");
+        File readme = new File(binary.getParentFile(), "docs/README.md");
+        assertTrue(license.isFile() && readme.isFile(), "The other files should be extracted too");
+        assertFalse(license.canExecute(), "LICENSE.txt should not be executable");
+        assertFalse(readme.canExecute(), "README.md should not be executable");
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void archiveFileNameFromTheIndexMustBeAPlainFileName() {
+        AtomicInteger archiveRequests = new AtomicInteger();
+        server.createContext("/terraform.zip", exchange -> {
+            archiveRequests.incrementAndGet();
+            respond(exchange, 404, "{}");
+        });
+        // As JSON string content: "..\\\\evil.zip" is ..\\evil.zip in the index and ..\evil.zip once parsed.
+        String[] badNames = {"../evil.zip", "sub/evil.zip", "..\\\\evil.zip", "..", ".", ""};
+        for (int i = 0; i < badNames.length; i++) {
+            String version = "1.9." + i;
+            String releasesUrl = terraformReleasesWithBuild(version, badNames[i], url("/terraform.zip"));
+            TerraformDownloader downloader = new TerraformDownloader(releasesUrl, tofuUrl());
+
+            IOException e = assertThrows(IOException.class, () -> downloader.downloadTerraformVersion(version), badNames[i]);
+            assertTrue(e.getMessage().contains("Invalid archive file name"), e.getMessage());
+        }
+        assertEquals(0, archiveRequests.get(), "Nothing should be downloaded");
+        assertFalse(home.resolve(".terraform-spring-boot/evil.zip").toFile().exists());
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void archiveEntryWithParentSegmentsIsRejected() throws Exception {
+        File outside = home.resolve(".terraform-spring-boot/terraform/evil").toFile();
+        assertArchiveIsRejected("1.9.8", "../evil", outside);
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void archiveEntryWithAnAbsolutePathIsRejected() throws Exception {
+        File outside = home.resolve("absolute-evil").toFile();
+        assertArchiveIsRejected("1.9.8", outside.getAbsolutePath(), outside);
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    void unknownFieldsInTheTerraformIndexAreIgnored() throws Exception {
+        byte[] zip = createZip(List.of(Map.entry("terraform", "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8))));
+        server.createContext("/terraform.zip", exchange -> respond(exchange, 200, zip, "application/octet-stream"));
+        String os = new TerraformDownloader(terraformUrl(), tofuUrl()).getOs();
+        String releases = "{\"name\":\"terraform\",\"new_top_level\":1,\"versions\":{\"1.9.8\":{\"name\":\"terraform\","
+                + "\"version\":\"1.9.8\",\"timestamp_created\":\"2024-10-16T00:00:00Z\",\"status\":{\"state\":\"supported\"},"
+                + "\"builds\":[{\"name\":\"terraform\",\"version\":\"1.9.8\",\"os\":\"" + os + "\",\"arch\":\"" + platformArch()
+                + "\",\"filename\":\"" + terraformArchiveName("1.9.8") + "\",\"url\":\"" + url("/terraform.zip")
+                + "\",\"sha256\":\"abc\",\"signatures\":[]}]}}}";
+        server.createContext("/terraform-extra.json", exchange -> respond(exchange, 200, releases));
+
+        String path = new TerraformDownloader(url("/terraform-extra.json"), tofuUrl()).downloadTerraformVersion("1.9.8");
+
+        assertEquals(terraformBinary("1.9.8").getAbsolutePath(), path);
+    }
+
+    private void assertArchiveIsRejected(String version, String entryName, File outside) throws IOException {
+        byte[] zip = createZip(List.of(
+                Map.entry(entryName, "pwned".getBytes(StandardCharsets.UTF_8)),
+                Map.entry("terraform", "#!/bin/sh\n".getBytes(StandardCharsets.UTF_8))));
+        server.createContext("/evil.zip", exchange -> respond(exchange, 200, zip, "application/octet-stream"));
+        String releasesUrl = terraformReleasesWithBuild(version, url("/evil.zip"));
+        TerraformDownloader downloader = new TerraformDownloader(releasesUrl, tofuUrl());
+
+        IOException e = assertThrows(IOException.class, () -> downloader.downloadTerraformVersion(version));
+
+        assertTrue(e.getCause().getMessage().contains("outside the target directory"), e.getCause().getMessage());
+        assertFalse(outside.exists(), "Nothing should be written outside the extraction directory");
+        assertFalse(terraformBinary(version).exists(), "Nothing should be installed");
+        assertNoLeftovers();
+    }
+
+    private void assertNoLeftovers() throws IOException {
+        try (Stream<Path> files = Files.walk(home.resolve(".terraform-spring-boot"))) {
+            List<String> leftovers = files.map(Path::toString)
+                    .filter(path -> path.endsWith(".part") || path.endsWith(".tmp"))
+                    .toList();
+            assertEquals(List.of(), leftovers, "Temporary files should be removed");
+        }
+    }
+
+    private File terraformBinary(String version) {
+        return home.resolve(".terraform-spring-boot/terraform/" + version + "/terraform").toFile();
+    }
+
+    private String terraformArchiveName(String version) {
+        String os = new TerraformDownloader(terraformUrl(), tofuUrl()).getOs();
+        return "terraform_" + version + "_" + os + "_" + platformArch() + ".zip";
+    }
+
+    // Serves a terraform index with one version whose build for this platform is at archiveUrl, returns its URL.
+    private String terraformReleasesWithBuild(String version, String archiveUrl) {
+        return terraformReleasesWithBuild(version, terraformArchiveName(version), archiveUrl);
+    }
+
+    private String terraformReleasesWithBuild(String version, String fileName, String archiveUrl) {
+        String os = new TerraformDownloader(terraformUrl(), tofuUrl()).getOs();
+        String releases = "{\"name\":\"terraform\",\"versions\":{\"" + version + "\":{\"name\":\"terraform\",\"version\":\""
+                + version + "\",\"builds\":[{\"name\":\"terraform\",\"version\":\"" + version + "\",\"os\":\"" + os
+                + "\",\"arch\":\"" + platformArch() + "\",\"filename\":\"" + fileName
+                + "\",\"url\":\"" + archiveUrl + "\"}]}}}";
+        server.createContext("/terraform-" + version + ".json", exchange -> respond(exchange, 200, releases));
+        return url("/terraform-" + version + ".json");
+    }
+
+    private static String platformArch() {
+        return "aarch64".equals(SystemUtils.OS_ARCH) ? "arm64" : SystemUtils.OS_ARCH;
+    }
+
+    private static byte[] randomBytes(int size) {
+        byte[] bytes = new byte[size];
+        new Random(42).nextBytes(bytes);
+        return bytes;
+    }
+
+    private static byte[] createZip(List<Map.Entry<String, byte[]>> entries) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        try (ZipOutputStream zos = new ZipOutputStream(baos)) {
+            for (Map.Entry<String, byte[]> entry : entries) {
+                zos.putNextEntry(new ZipEntry(entry.getKey()));
+                zos.write(entry.getValue());
+                zos.closeEntry();
+            }
+        }
+        return baos.toByteArray();
+    }
+
     private void awaitRelease() {
         try {
             releaseHangingRequests.await(30, TimeUnit.SECONDS);
@@ -838,7 +1014,7 @@ class TerraformDownloaderTest {
 
     private String tofuAssetName(String version) {
         String os = new TerraformDownloader(terraformUrl(), tofuUrl()).getOs();
-        String arch = "aarch64".equals(SystemUtils.OS_ARCH) ? "arm64" : SystemUtils.OS_ARCH;
+        String arch = platformArch();
         return "tofu_" + version + "_" + os + "_" + arch + ".zip";
     }
 
