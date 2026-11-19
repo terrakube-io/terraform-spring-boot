@@ -22,7 +22,6 @@ import reactor.netty.http.client.HttpClient;
 
 import java.io.File;
 import java.io.FileInputStream;
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InterruptedIOException;
 import java.net.URI;
@@ -31,6 +30,7 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.time.Duration;
 import java.time.Instant;
@@ -107,7 +107,6 @@ public class TerraformDownloader {
     private File terraformDownloadDirectory;
 
     private File tofuDownloadDirectory;
-    private File terraformDirectory;
     private String userHomeDirectory;
 
     private static final class CachedReleases<T> {
@@ -199,8 +198,7 @@ public class TerraformDownloader {
                 FilenameUtils.separatorsToSystem(
                         TERRAFORM_DIRECTORY
                 ));
-        this.terraformDirectory = new File(terrafomVersionPath);
-        FileUtils.forceMkdir(this.terraformDirectory);
+        FileUtils.forceMkdir(new File(terrafomVersionPath));
         log.info("Validate/Create terraform directory: {}", terrafomVersionPath);
     }
 
@@ -220,8 +218,7 @@ public class TerraformDownloader {
                 FilenameUtils.separatorsToSystem(
                         TOFU_DIRECTORY
                 ));
-        this.terraformDirectory = new File(tofuVersionPath);
-        FileUtils.forceMkdir(this.terraformDirectory);
+        FileUtils.forceMkdir(new File(tofuVersionPath));
         log.info("Validate/Create tofu directory: {}", tofuVersionPath);
     }
 
@@ -559,6 +556,11 @@ public class TerraformDownloader {
 
     private String downloadFileOrReturnPathIfAlreadyExists(String fileName, String zipReleaseUrl, String version,
                                                            boolean tofu) throws IOException {
+        // The file name comes from the releases index, so it must not point outside the download directory.
+        if (fileName == null || fileName.isEmpty() || fileName.equals(".") || fileName.equals("..")
+                || fileName.contains("/") || fileName.contains("\\")) {
+            throw new IOException(String.format("Invalid archive file name %s for %s", fileName, zipReleaseUrl));
+        }
         String product = tofu ? "tofu" : "terraform";
         File downloadDirectory = tofu ? this.tofuDownloadDirectory : this.terraformDownloadDirectory;
         File binaryFile = new File(getTerraformBinaryPath(version, tofu));
@@ -574,7 +576,7 @@ public class TerraformDownloader {
             log.info("{} {} binary missing, extracting existing archive {}", product, version, zipFile);
             try {
                 return unzipVersion(version, zipFile, tofu);
-            } catch (IOException e) {
+            } catch (IOException | RuntimeException e) {
                 log.warn("Existing {} archive {} is not usable, downloading it again: {}", product, zipFile, e.getMessage());
                 FileUtils.deleteQuietly(zipFile);
             }
@@ -592,24 +594,45 @@ public class TerraformDownloader {
 
         try {
             return unzipVersion(version, zipFile, tofu);
-        } catch (IOException exception) {
+        } catch (IOException | RuntimeException exception) {
+            // A bad archive (e.g. a malformed entry name) would otherwise be extracted again on every run.
             FileUtils.deleteQuietly(zipFile);
             throw new IOException("Unable to extract ".concat(zipReleaseUrl), exception);
         }
     }
 
+    /**
+     * Extracts the archive into a temporary directory next to the version directory and only moves the binary
+     * into place once it is complete, so a JVM killed mid-extract never leaves a truncated binary there.
+     */
     private String unzipVersion(String version, File zipFile, boolean tofu) throws IOException {
-        if (tofu) {
-            unzipTofuVersion(version, zipFile);
-        } else {
-            unzipTerraformVersion(version, zipFile);
-        }
-
+        String product = tofu ? "tofu" : "terraform";
         File binaryFile = new File(getTerraformBinaryPath(version, tofu));
-        if (!isUsableBinary(binaryFile)) {
-            throw new IOException(String.format("Archive %s did not contain a usable %s binary", zipFile, tofu ? "tofu" : "terraform"));
+        Path versionDirectory = binaryFile.getParentFile().toPath();
+        // Same parent, so same file system: the moves below are renames.
+        Path extractDirectory = versionDirectory.resolveSibling("." + version + "." + UUID.randomUUID() + ".tmp");
+        try {
+            Path extractedBinary = unzip(zipFile, extractDirectory, product);
+            if (!isUsableBinary(extractedBinary.toFile())) {
+                throw new IOException(String.format("Archive %s did not contain a usable %s binary", zipFile, product));
+            }
+
+            if (!Files.exists(versionDirectory)) {
+                try {
+                    Files.move(extractDirectory, versionDirectory, StandardCopyOption.ATOMIC_MOVE);
+                    return binaryFile.getAbsolutePath();
+                } catch (IOException e) {
+                    log.debug("Unable to move {} to {}, moving only the binary: {}", extractDirectory, versionDirectory, e.getMessage());
+                }
+            }
+            // The directory exists, e.g. with a broken binary from an older install. Renaming over that binary
+            // is atomic, and a process still running the old file keeps it open.
+            Files.createDirectories(versionDirectory);
+            Files.move(extractedBinary, binaryFile.toPath(), StandardCopyOption.ATOMIC_MOVE);
+            return binaryFile.getAbsolutePath();
+        } finally {
+            FileUtils.deleteQuietly(extractDirectory.toFile());
         }
-        return binaryFile.getAbsolutePath();
     }
 
     private Optional<String> findInstalledBinary(String version, boolean tofu) {
@@ -841,116 +864,48 @@ public class TerraformDownloader {
         return SystemUtils.OS_ARCH;
     }
 
-    private String unzipTerraformVersion(String terraformVersion, File terraformZipFile) throws IOException {
-        createVersionDirectory(terraformVersion, TERRAFORM_DIRECTORY);
-        String newFilePath = null;
-        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(terraformZipFile))) {
-            ZipEntry zipEntry = zis.getNextEntry();
-
-            byte[] buffer = new byte[1024];
-            while (zipEntry != null) {
-                newFilePath = this.userHomeDirectory.concat(
-                        FilenameUtils.separatorsToSystem(
-                                TERRAFORM_DIRECTORY.concat(terraformVersion.concat("/").concat(zipEntry.getName()))
-                        )
-                );
-                log.info("Unzip: {}", newFilePath);
-                File newFile = new File(newFilePath);
-                if (zipEntry.isDirectory()) {
-                    if (!newFile.isDirectory() && !newFile.mkdirs()) {
-                        throw new IOException("Failed to create directory " + newFile);
-                    }
-                } else {
-                    File parent = newFile.getParentFile();
-                    if (!parent.isDirectory() && !parent.mkdirs()) {
-                        throw new IOException("Failed to create directory " + parent);
-                    }
-
-                    try (FileOutputStream fos = new FileOutputStream(newFile)) {
-                        int len;
-                        while ((len = zis.read(buffer)) > 0) {
-                            fos.write(buffer, 0, len);
-                        }
-                    }
-
-                    if (SystemUtils.IS_OS_LINUX || SystemUtils.IS_OS_MAC) {
-                        File updateAccess = new File(newFilePath);
-                        if (updateAccess.setExecutable(true, true))
-                            log.info("Terraform setExecutable successful");
-                        else
-                            log.error("Terraform setExecutable successful");
-                    }
+    /**
+     * Extracts the archive into {@code targetDirectory} and returns the path of the product binary, the only
+     * file made executable.
+     */
+    private static Path unzip(File zipFile, Path targetDirectory, String product) throws IOException {
+        Path target = targetDirectory.toAbsolutePath().normalize();
+        Path binary = target.resolve(product);
+        Files.createDirectories(target);
+        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(zipFile))) {
+            ZipEntry zipEntry;
+            while ((zipEntry = zis.getNextEntry()) != null) {
+                Path entryPath = target.resolve(zipEntry.getName()).normalize();
+                // Zip slip: an entry like "../../.bashrc" or "/etc/cron.d/job" from a custom or tampered
+                // mirror must not write outside the target directory.
+                if (!entryPath.startsWith(target)) {
+                    throw new IOException(String.format("Archive %s has an entry outside the target directory: %s",
+                            zipFile, zipEntry.getName()));
                 }
-                zipEntry = zis.getNextEntry();
-            }
-            zis.closeEntry();
-        }
-        return newFilePath;
-    }
-
-    private String unzipTofuVersion(String tofuVersion, File tofuZipFile) throws IOException {
-        createVersionDirectory(tofuVersion, TOFU_DIRECTORY);
-        String newFilePath = null;
-        try (ZipInputStream zis = new ZipInputStream(new FileInputStream(tofuZipFile))) {
-            ZipEntry zipEntry = zis.getNextEntry();
-
-            byte[] buffer = new byte[1024];
-            while (zipEntry != null) {
-                newFilePath = this.userHomeDirectory.concat(
-                        FilenameUtils.separatorsToSystem(
-                                TOFU_DIRECTORY.concat(tofuVersion.concat("/").concat(zipEntry.getName()))
-                        )
-                );
-                log.info("Unzip Tofu files: {}", newFilePath);
-                File newTofuFile = new File(newFilePath);
+                log.info("Unzip: {}", entryPath);
                 if (zipEntry.isDirectory()) {
-                    if (!newTofuFile.isDirectory() && !newTofuFile.mkdirs()) {
-                        throw new IOException("Failed to create directory for" + newTofuFile);
-                    }
+                    Files.createDirectories(entryPath);
                 } else {
-                    File parent = newTofuFile.getParentFile();
-                    if (!parent.isDirectory() && !parent.mkdirs()) {
-                        throw new IOException("Failed to create directory for" + parent);
-                    }
-
-                    try (FileOutputStream file = new FileOutputStream(newTofuFile)) {
-                        int len;
-                        while ((len = zis.read(buffer)) > 0) {
-                            file.write(buffer, 0, len);
-                        }
-                    }
-
-                    if (SystemUtils.IS_OS_LINUX || SystemUtils.IS_OS_MAC) {
-                        File updateAccess = new File(newFilePath);
-                        if (updateAccess.setExecutable(true, true))
-                            log.info("Tofu setExecutable successful");
-                        else
-                            log.error("Tofu setExecutable successful");
-                    }
+                    Files.createDirectories(entryPath.getParent());
+                    Files.copy(zis, entryPath);
                 }
-                zipEntry = zis.getNextEntry();
             }
-            zis.closeEntry();
         }
-        return this.userHomeDirectory.concat(
-                FilenameUtils.separatorsToSystem(
-                        TOFU_DIRECTORY.concat(tofuVersion.concat("/").concat("tofu"))
-                ));
-    }
 
-    private void createVersionDirectory(String version, String directoryPath) throws IOException {
-        File terraformVersionDirectory = new File(
-                userHomeDirectory.concat(
-                        FilenameUtils.separatorsToSystem(
-                                directoryPath.concat(version)
-                        )));
-        FileUtils.forceMkdir(terraformVersionDirectory);
+        if (Files.isRegularFile(binary) && !SystemUtils.IS_OS_WINDOWS) {
+            if (binary.toFile().setExecutable(true, true)) {
+                log.info("{} setExecutable successful", product);
+            } else {
+                log.error("{} setExecutable failed for {}", product, binary);
+            }
+        }
+        return binary;
     }
-
 }
 
 @Getter
 @Setter
+@JsonIgnoreProperties(ignoreUnknown = true)
 class TerraformBuild {
     private String name;
     private String version;
@@ -962,6 +917,7 @@ class TerraformBuild {
 
 @Getter
 @Setter
+@JsonIgnoreProperties(ignoreUnknown = true)
 class TerraformResponse {
     private String name;
     private HashMap<String, TerraformVersion> versions;
@@ -969,6 +925,7 @@ class TerraformResponse {
 
 @Getter
 @Setter
+@JsonIgnoreProperties(ignoreUnknown = true)
 class TerraformVersion {
     private String name;
     private String version;
