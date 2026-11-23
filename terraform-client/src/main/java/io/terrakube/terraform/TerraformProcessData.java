@@ -8,7 +8,7 @@ import java.util.Map;
 @AllArgsConstructor
 @Getter
 @Setter
-@Builder
+@Builder(toBuilder = true)
 public class TerraformProcessData {
     @NonNull String terraformVersion;
     @NonNull File workingDirectory;
