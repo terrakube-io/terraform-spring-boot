@@ -19,6 +19,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -73,6 +74,12 @@ class TerraformClientApiTest {
                 return new TerraformDownloader() {
                     @Override
                     public String downloadTerraformVersion(String terraformVersion) {
+                        downloads.incrementAndGet();
+                        return binary;
+                    }
+
+                    @Override
+                    public String downloadTofuVersion(String tofuVersion) {
                         downloads.incrementAndGet();
                         return binary;
                     }
@@ -203,6 +210,138 @@ class TerraformClientApiTest {
             assertThrows(IllegalArgumentException.class, () -> client.planDestroyDetailExitCode(data, IGNORE, IGNORE));
         }
         assertEquals(0, downloads.get(), "contradictory flags must be rejected before any binary is fetched");
+    }
+
+    // Prints, one per line: GIT_SSH_COMMAND as the process sees it; how sh
+    // splits it into words, which is what git does with it, and the third word,
+    // which is the key path; then each argument, so argument boundaries show.
+    private static String printInitScript(Path bin) throws IOException {
+        return script(bin, "print-init.sh", String.join("\n",
+                "printf 'GIT_SSH_COMMAND=%s\\n' \"${GIT_SSH_COMMAND-<unset>}\"",
+                "(eval \"set -- $GIT_SSH_COMMAND\"; printf 'words=%s key=%s\\n' \"$#\" \"$3\")",
+                "printf 'arg=%s\\n' \"$@\"",
+                "echo to-stderr >&2"));
+    }
+
+    private static List<String> initOutput(TerraformClient client, TerraformProcessData data) throws Exception {
+        List<String> output = new CopyOnWriteArrayList<>();
+        assertTrue(client.init(data, output::add, IGNORE).get(30, TimeUnit.SECONDS));
+        return output;
+    }
+
+    private static List<String> args(List<String> output) {
+        return output.stream().filter(line -> line.startsWith("arg=")).collect(Collectors.toList());
+    }
+
+    private static String line(List<String> output, String prefix) {
+        return output.stream().filter(line -> line.startsWith(prefix)).findFirst()
+                .orElseThrow(() -> new AssertionError("no " + prefix + " line in " + output));
+    }
+
+    @Test
+    void shellQuoteKeepsEveryCharacterLiteral() throws Exception {
+        assertEquals("'it'\\''s'", TerraformClient.shellQuote("it's"));
+        List<String> values = List.of("", "plain", "with space", "it's", "''", "$HOME", "${PATH}",
+                "`id`", "$(id)", "a;b", "a && b", "back\\slash", "new\nline", "a 'b' $c `d` ;e");
+        for (String value : values) {
+            // The way git uses it: the shell evaluates the quoted text.
+            ProcessBuilder shell = new ProcessBuilder("sh", "-c", "eval \"set -- $Q\"; printf '%s:%s' \"$#\" \"$1\"");
+            shell.environment().put("Q", TerraformClient.shellQuote(value));
+            Process process = shell.start();
+            String result = new String(process.getInputStream().readAllBytes());
+            assertEquals(0, process.waitFor());
+            assertEquals("1:" + value, result, "shell-quoted " + value);
+        }
+    }
+
+    @Test
+    void sshInitRunsTheBinaryDirectlyWithTheSameArgumentsAsInit(@TempDir File workingDirectory, @TempDir Path bin) throws Exception {
+        String binary = printInitScript(bin);
+        File sshFile = new File(workingDirectory, "id_rsa");
+        String backendConfig = "backend dir/a;b.hcl";
+        for (boolean tofu : new boolean[]{false, true}) {
+            TerraformProcessData plain = TerraformProcessData.builder()
+                    .terraformVersion("1.5.7")
+                    .workingDirectory(workingDirectory)
+                    .terraformBackendConfigFileName(backendConfig)
+                    .tofu(tofu)
+                    .build();
+            TerraformProcessData withSsh = plain.toBuilder().sshFile(sshFile).build();
+
+            try (TerraformClient client = fakeBinaryClient(binary, new AtomicInteger())) {
+                // The binary itself, not bash -c with a command string.
+                List<String> sshCommands = client.createCommandLauncher(withSsh, binary, TerraformCommand.init).getCommands();
+                assertEquals(binary, sshCommands.get(0));
+                assertEquals(client.createCommandLauncher(plain, binary, TerraformCommand.init).getCommands(), sshCommands);
+
+                List<String> plainOutput = initOutput(client, plain);
+                List<String> sshOutput = initOutput(client, withSsh);
+
+                // The backend config file name arrives as one literal argument:
+                // through bash, the space split it and the ; ended the command.
+                List<String> expectedArgs = List.of("arg=init", "arg=-no-color",
+                        "arg=-backend-config=" + backendConfig, "arg=-input=false");
+                assertEquals(expectedArgs, args(plainOutput), "tofu=" + tofu);
+                assertEquals(expectedArgs, args(sshOutput), "tofu=" + tofu);
+
+                String inherited = System.getenv("GIT_SSH_COMMAND");
+                assertEquals("GIT_SSH_COMMAND=" + (inherited == null ? "<unset>" : inherited),
+                        line(plainOutput, "GIT_SSH_COMMAND="), "init without an sshFile must not set it");
+                assertEquals("GIT_SSH_COMMAND=ssh -i '" + sshFile.getAbsolutePath() + "' -o StrictHostKeyChecking=no",
+                        line(sshOutput, "GIT_SSH_COMMAND="));
+            }
+        }
+    }
+
+    @Test
+    void sshKeyPathReachesGitsShellIntact(@TempDir File workingDirectory, @TempDir Path bin) throws Exception {
+        File sshFile = new File(workingDirectory, "my keys/it's $HOME `id`; echo injected/id_rsa");
+        TerraformProcessData data = processData(workingDirectory).toBuilder().sshFile(sshFile).build();
+
+        try (TerraformClient client = fakeBinaryClient(printInitScript(bin), new AtomicInteger())) {
+            List<String> output = initOutput(client, data);
+            assertEquals("words=5 key=" + sshFile.getAbsolutePath(), line(output, "words="));
+        }
+    }
+
+    @Test
+    void sshFileTakesPrecedenceOverExplicitGitSshCommand(@TempDir File workingDirectory, @TempDir Path bin) throws Exception {
+        File sshFile = new File(workingDirectory, "id_rsa");
+        String expected = "GIT_SSH_COMMAND=ssh -i '" + sshFile.getAbsolutePath() + "' -o StrictHostKeyChecking=no";
+        String binary = printInitScript(bin);
+        // Callers pass user-controlled variables in this map, so a global value,
+        // even an empty one, must not drop the key and fail every SSH fetch.
+        for (String callerValue : List.of("ssh -F /custom/config", "")) {
+            TerraformProcessData data = processData(workingDirectory).toBuilder()
+                    .sshFile(sshFile)
+                    .terraformEnvironmentVariable("GIT_SSH_COMMAND", callerValue)
+                    .build();
+
+            try (TerraformClient client = fakeBinaryClient(binary, new AtomicInteger())) {
+                assertEquals(expected, line(initOutput(client, data), "GIT_SSH_COMMAND="), "caller value '" + callerValue + "'");
+
+                // Only init is affected: other commands get the caller's value as is.
+                List<String> output = new CopyOnWriteArrayList<>();
+                assertTrue(client.plan(data, output::add, IGNORE).get(30, TimeUnit.SECONDS));
+                assertEquals("GIT_SSH_COMMAND=" + callerValue, line(output, "GIT_SSH_COMMAND="));
+            }
+        }
+    }
+
+    @Test
+    void sshInitHonoursRedirectErrorStream(@TempDir File workingDirectory, @TempDir Path bin) throws Exception {
+        TerraformProcessData data = processData(workingDirectory).toBuilder()
+                .sshFile(new File(workingDirectory, "id_rsa"))
+                .build();
+
+        try (TerraformClient client = fakeBinaryClient(printInitScript(bin), new AtomicInteger())) {
+            client.setRedirectErrorStream(true);
+            List<String> output = new CopyOnWriteArrayList<>();
+            List<String> errors = new CopyOnWriteArrayList<>();
+            assertTrue(client.init(data, output::add, errors::add).get(30, TimeUnit.SECONDS));
+            assertTrue(output.contains("to-stderr"), output.toString());
+            assertEquals(List.of(), errors);
+        }
     }
 
     @Test
